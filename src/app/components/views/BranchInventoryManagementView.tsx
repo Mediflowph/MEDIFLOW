@@ -141,13 +141,33 @@ export function BranchInventoryManagementView({
       }
 
       const branchData: BranchData[] = data.map(
-        (item: any) => ({
-          userId: item.userId,
-          userName: item.userName || "Unknown User",
-          branchName: item.branchName || "Unknown Branch",
-          userRole: item.userRole || "User",
-          inventory: item.value || [],
-        }),
+        (item: any) => {
+          // Transform SQL inventory data to match InventoryBatch format
+          const rawInventory = item.inventory || [];
+          const transformedInventory = rawInventory.map((inv: any) => ({
+            id: inv.id,
+            drugName: inv.drug_name || inv.drugName || 'Unknown',
+            program: inv.program || 'General',
+            dosage: inv.dosage || '',
+            unit: inv.unit || 'units',
+            batchNumber: inv.batch_number || inv.batchNumber || '',
+            beginningInventory: inv.quantity !== undefined ? inv.quantity : (inv.beginningInventory || 0),
+            quantityReceived: inv.quantity_received || inv.quantityReceived || 0,
+            dateReceived: inv.date_received || inv.dateReceived || inv.created_at || '',
+            unitCost: inv.unit_cost || inv.unit_price || inv.unitCost || 0,
+            quantityDispensed: inv.quantity_dispensed || inv.quantityDispensed || 0,
+            expirationDate: inv.expiration_date || inv.expiry_date || inv.expirationDate || '',
+            remarks: inv.remarks || ''
+          }));
+
+          return {
+            userId: item.userId,
+            userName: item.userName || "Unknown User",
+            branchName: item.branchName || "Unknown Branch",
+            userRole: item.userRole || "User",
+            inventory: transformedInventory,
+          };
+        }
       ).sort((a, b) => {
         // Sort branches alphabetically by city/location name
         return a.branchName.localeCompare(b.branchName);

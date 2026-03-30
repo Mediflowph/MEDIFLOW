@@ -41,6 +41,36 @@ export function StockLocatorView({ userToken }: StockLocatorViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedDrugs, setExpandedDrugs] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [currentToken, setCurrentToken] = useState<string | null>(userToken || null);
+
+  // Get fresh token whenever needed
+  const getFreshToken = async (): Promise<string | null> => {
+    try {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error || !session) {
+        // Try refreshing the session
+        const { data: refreshData } = await supabase.auth.refreshSession();
+        if (refreshData?.session) {
+          setCurrentToken(refreshData.session.access_token);
+          return refreshData.session.access_token;
+        }
+        console.error('❌ Failed to get session:', error);
+        return null;
+      }
+      setCurrentToken(session.access_token);
+      return session.access_token;
+    } catch (error) {
+      console.error('❌ Error getting token:', error);
+      return null;
+    }
+  };
+
+  // Update token when prop changes
+  useEffect(() => {
+    if (userToken) {
+      setCurrentToken(userToken);
+    }
+  }, [userToken]);
 
   const daysUntilExpiry = (expirationDate: string) => {
     return Math.floor((new Date(expirationDate).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
@@ -58,19 +88,24 @@ export function StockLocatorView({ userToken }: StockLocatorViewProps) {
 
   // Fetch all branches for Stock Locator
   const fetchAllBranches = async () => {
-    if (!userToken) return;
-    
     try {
       setIsLoading(true);
       setError(null);
       
       console.log('🔍 Stock Locator: Fetching all branches...');
       
+      // Always get a fresh token to avoid expiry issues
+      const token = await getFreshToken();
+      if (!token) {
+        setError('Authentication failed. Please refresh the page and sign in again.');
+        return;
+      }
+      
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/all-branches`,
         {
           headers: {
-            "X-User-Token": userToken,
+            "X-User-Token": token,
             Authorization: `Bearer ${publicAnonKey}`,
           },
         },
@@ -105,15 +140,35 @@ export function StockLocatorView({ userToken }: StockLocatorViewProps) {
       console.log(`🔍 Stock Locator: Processing ${data.length} branches...`);
       
       const branchData: BranchData[] = data.map(
-        (item: any) => ({
-          userId: item.userId,
-          userName: item.userName || "Unknown User",
-          branchName: item.branchName || "Unknown Branch",
-          userRole: item.userRole || "User",
-          userEmail: item.userEmail,
-          userPhone: item.userPhone,
-          inventory: item.value || [],
-        }),
+        (item: any) => {
+          // Transform SQL inventory data to match InventoryBatch format
+          const transformedInventory = (item.inventory || []).map((inv: any) => ({
+            id: inv.id,
+            drugName: inv.drug_name || inv.drugName || 'Unknown',
+            program: inv.program || 'General',
+            dosage: inv.dosage || '',
+            unit: inv.unit || 'units',
+            batchNumber: inv.batch_number || inv.batchNumber || '',
+            // SQL uses "quantity" field → map to beginningInventory
+            beginningInventory: inv.quantity !== undefined ? inv.quantity : (inv.beginningInventory || 0),
+            quantityReceived: inv.quantity_received || inv.quantityReceived || 0,
+            dateReceived: inv.date_received || inv.dateReceived || inv.created_at || '',
+            unitCost: inv.unit_cost || inv.unit_price || inv.unitCost || 0,
+            quantityDispensed: inv.quantity_dispensed || inv.quantityDispensed || 0,
+            expirationDate: inv.expiration_date || inv.expiry_date || inv.expirationDate || '',
+            remarks: inv.remarks || ''
+          }));
+
+          return {
+            userId: item.userId,
+            userName: item.userName || "Unknown User",
+            branchName: item.branchName || "Unknown Branch",
+            userRole: item.userRole || "User",
+            userEmail: item.userEmail,
+            userPhone: item.userPhone,
+            inventory: transformedInventory,
+          };
+        }
       );
 
       console.log('🔍 Stock Locator: Processed branches:', branchData.length);
@@ -134,24 +189,11 @@ export function StockLocatorView({ userToken }: StockLocatorViewProps) {
   };
 
   useEffect(() => {
-    if (userToken) {
-      fetchAllBranches();
-    }
-  }, [userToken]);
+    // Fetch on mount - getFreshToken handles auth internally
+    fetchAllBranches();
+  }, []);
 
-  // Get user info from Supabase
-  useEffect(() => {
-    const checkUserRole = async () => {
-      if (!userToken) return;
-      
-      const { data: { user } } = await supabase.auth.getUser(userToken);
-      console.log('🔍 Stock Locator - Current User Role:', user?.user_metadata?.role);
-      console.log('🔍 Stock Locator - User Email:', user?.email);
-      console.log('🔍 Stock Locator - User Name:', user?.user_metadata?.name);
-    };
-    
-    checkUserRole();
-  }, [userToken]);
+
 
   if (isLoading) {
     return (

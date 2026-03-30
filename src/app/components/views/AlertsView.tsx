@@ -1,7 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { AlertTriangle, TrendingDown, AlertCircle, XCircle, FileSpreadsheet, RefreshCw, Building, Package, Calendar, PackagePlus, Pill } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
-import { InventoryBatch } from '@/app/types/inventory';
+import { supabase } from '@/app/utils/supabase';
+import { authManager } from '@/app/utils/authManager';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
@@ -38,20 +36,65 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
   const [branchAlerts, setBranchAlerts] = useState<BranchAlert[]>([]);
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
   const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
+  const [allBranches, setAllBranches] = useState<Array<{id: string, name: string}>>([]);
+  const [currentToken, setCurrentToken] = useState<string | null>(userToken || null);
 
   const now = new Date();
 
+  // Get fresh token whenever needed using centralized auth manager
+  const getFreshToken = async (): Promise<string | null> => {
+    try {
+      const token = await authManager.getToken();
+      if (token) {
+        setCurrentToken(token);
+      }
+      return token;
+    } catch (error) {
+      console.error('❌ Error getting token:', error);
+      return null;
+    }
+  };
+
+  // Update token when prop changes
+  useEffect(() => {
+    if (userToken) {
+      setCurrentToken(userToken);
+    }
+  }, [userToken]);
+
   // Fetch all branches for HO and Admin
   const fetchAllBranches = async () => {
-    if (!userToken) return;
+    if (!currentToken) {
+      // Try to get a fresh token
+      const freshToken = await getFreshToken();
+      if (!freshToken) return;
+    }
     
     try {
       setIsLoading(true);
+      
+      // First, fetch all branches from the branches table
+      const branchesResponse = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/branches`,
+        {
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+        },
+      );
+      
+      if (branchesResponse.ok) {
+        const branchesData = await branchesResponse.json();
+        setAllBranches(branchesData || []);
+        console.log('✅ Fetched all branches:', branchesData);
+      }
+      
+      // Then fetch inventory data for branches with users
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/all-branches`,
         {
           headers: {
-            "X-User-Token": userToken,
+            "X-User-Token": currentToken!,
             Authorization: `Bearer ${publicAnonKey}`,
           },
         },
@@ -167,7 +210,7 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
   };
 
   useEffect(() => {
-    if ((userRole === 'Administrator' || userRole === 'Health Officer') && userToken) {
+    if ((userRole === 'Administrator' || userRole === 'Health Officer') && currentToken) {
       console.log('🔔 [AlertsView] Initial load for Admin/HO - fetching branch data');
       fetchAllBranches();
       
@@ -185,7 +228,7 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
         clearInterval(intervalId);
       };
     }
-  }, [userToken, userRole]);
+  }, [currentToken, userRole]);
 
   // For Admin and Health Officer - Multi-Branch Alerts
   if (userRole === 'Administrator' || userRole === 'Health Officer') {
@@ -403,6 +446,70 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
             </div>
           </CardContent>
         </Card>
+
+        {/* All Registered Branches */}
+        {allBranches.length > 0 && (
+          <Card className="border-none shadow-md">
+            <CardHeader className="border-b bg-gradient-to-r from-green-50 to-teal-50">
+              <CardTitle className="flex items-center gap-2 text-gray-800">
+                <Building className="w-5 h-5 text-green-600" />
+                All Registered Branches ({allBranches.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {allBranches.map((branch) => {
+                  // Check if this branch has users with inventory
+                  const hasInventory = branches.some(b => b.branchName === branch.name);
+                  const branchUsers = branches.filter(b => b.branchName === branch.name);
+                  const totalInventoryItems = branchUsers.reduce((sum, b) => sum + b.inventory.length, 0);
+                  
+                  return (
+                    <div 
+                      key={branch.id} 
+                      className={`p-4 rounded-lg border-2 ${
+                        hasInventory 
+                          ? 'border-green-200 bg-green-50' 
+                          : 'border-gray-200 bg-gray-50'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex-1">
+                          <p className="font-semibold text-gray-800">{branch.name}</p>
+                          <p className="text-[10px] text-gray-400 font-mono mt-1">ID: {branch.id}</p>
+                        </div>
+                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold ${
+                          hasInventory 
+                            ? 'bg-green-600 text-white' 
+                            : 'bg-gray-400 text-white'
+                        }`}>
+                          {hasInventory ? '✓ Active' : 'No Data'}
+                        </span>
+                      </div>
+                      {hasInventory && (
+                        <div className="text-xs text-gray-600 mt-2">
+                          <div className="flex items-center gap-1">
+                            <Package className="w-3 h-3" />
+                            <span>{branchUsers.length} user account{branchUsers.length !== 1 ? 's' : ''}</span>
+                          </div>
+                          <div className="flex items-center gap-1 mt-1">
+                            <Pill className="w-3 h-3" />
+                            <span>{totalInventoryItems} inventory item{totalInventoryItems !== 1 ? 's' : ''}</span>
+                          </div>
+                        </div>
+                      )}
+                      {!hasInventory && (
+                        <p className="text-xs text-gray-500 mt-2">
+                          No users or inventory assigned yet
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Expired Items Across Branches - Grouped by Location */}

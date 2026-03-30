@@ -482,7 +482,7 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
           </div>
           <div>
             <h2 className="text-2xl font-bold text-gray-800">Physical Inventory Report</h2>
-            <p className="text-gray-600 font-medium">BGO.HSO.F.PHAR.009 | City Government of Baguio</p>
+          
           </div>
         </div>
         <div className="flex gap-3">
@@ -513,7 +513,7 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
               <p className="font-semibold text-gray-800">{inventory.length} Batches</p>
             </div>
             <div>
-              <p className="text-xs text-gray-500 uppercase font-bold">Official Form</p>
+      
               <p className="font-semibold text-[#9867C5]">DOH Augmentation/Donation</p>
             </div>
           </div>

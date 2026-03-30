@@ -32,11 +32,26 @@ export function ProfileView({ session, userToken, onProfileUpdate }: ProfileView
   const [editForm, setEditForm] = useState<Partial<BranchUser>>({});
 
   const userRole = session?.user?.user_metadata?.role || 'Staff';
-  const userBranch = session?.user?.user_metadata?.branch || 'N/A';
+  
+  // Get the actual branch from localStorage (where the logged-in branch is stored)
+  const getCurrentBranch = () => {
+    try {
+      const savedBranch = localStorage.getItem('mediflow_current_branch');
+      if (savedBranch) {
+        const parsedBranch = JSON.parse(savedBranch);
+        return parsedBranch.name || 'N/A';
+      }
+    } catch (error) {
+      console.error('Error parsing saved branch:', error);
+    }
+    return session?.user?.user_metadata?.branch || 'N/A';
+  };
+  
+  const userBranch = getCurrentBranch();
   const userEmail = session?.user?.email || '';
   
   // Only allow name editing for Administrator and Health Officer
-  const canEditInfo = false; // Disabled for all users - name fields are not editable
+  const canEditInfo = userRole === 'Administrator' || userRole === 'Health Officer';
   const isAdmin = userRole === 'Administrator';
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -293,12 +308,17 @@ export function ProfileView({ session, userToken, onProfileUpdate }: ProfileView
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 bg-gray-100 border border-gray-200 rounded-xl text-gray-600 cursor-not-allowed"
+                    className={`w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl ${
+                      canEditInfo 
+                        ? 'bg-white text-gray-800 focus:ring-2 focus:ring-[#9867C5] outline-none' 
+                        : 'bg-gray-100 text-gray-600 cursor-not-allowed'
+                    }`}
                     placeholder="Enter your full name"
-                    disabled={true}
+                    disabled={!canEditInfo}
                   />
                 </div>
-                <p className="text-xs text-gray-500 ml-1">Name cannot be changed</p>
+                {!canEditInfo && <p className="text-xs text-gray-500 ml-1">Name cannot be changed</p>}
+                {canEditInfo && <p className="text-xs text-gray-500 ml-1">You can update your name</p>}
               </div>
 
               {/* Email (Read-only) */}

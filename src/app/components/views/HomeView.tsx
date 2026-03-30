@@ -29,6 +29,7 @@ interface BranchDrugData {
   branchName: string;
   dispensed: number;
   received: number;
+  stock: number;
   utilizationRate: number;
 }
 
@@ -36,6 +37,7 @@ interface DrugUtilization {
   drugName: string;
   totalDispensed: number;
   totalReceived: number;
+  totalStock: number;
   utilizationRate: number;
   branchCount: number;
   branches: BranchDrugData[];
@@ -47,6 +49,7 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
   const [selectedDrug, setSelectedDrug] = useState<string | null>(null);
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
   const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
+  const [adminInventory, setAdminInventory] = useState<InventoryBatch[]>([]);
 
   // Fetch and calculate top utilized drugs across all branches
   const fetchTopUtilizedDrugs = async () => {
@@ -82,15 +85,37 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
         branches: Map<string, BranchDrugData> 
       }>();
       
+      const allInventoryItems: InventoryBatch[] = [];
+      
       if (Array.isArray(allInventories)) {
         for (const invData of allInventories) {
-          const inventory: InventoryBatch[] = invData.value || [];
+          const rawInventory = invData.inventory || invData.value || [];
+          
+          // Transform SQL data to match InventoryBatch interface
+          const branchInventory: InventoryBatch[] = rawInventory.map((item: any) => ({
+            id: item.id,
+            drugName: item.drug_name || item.drugName,
+            program: item.program || 'General',
+            dosage: item.dosage || '',
+            unit: item.unit || 'units',
+            batchNumber: item.batch_number || item.batchNumber || '',
+            beginningInventory: item.quantity !== undefined ? item.quantity : (item.beginningInventory || 0),
+            quantityReceived: item.quantity_received || item.quantityReceived || 0,
+            dateReceived: item.date_received || item.dateReceived || item.created_at || '',
+            unitCost: item.unit_cost || item.unit_price || item.unitCost || 0,
+            quantityDispensed: item.quantity_dispensed || item.quantityDispensed || 0,
+            expirationDate: item.expiration_date || item.expiry_date || item.expirationDate || '',
+            remarks: item.remarks || ''
+          }));
+          
+          allInventoryItems.push(...branchInventory);
           const branchName = invData.branchName || 'Unknown';
           
-          inventory.forEach((item) => {
+          branchInventory.forEach((item) => {
             const existing = drugMap.get(item.drugName) || { 
               dispensed: 0, 
               received: 0, 
+              stock: 0,
               branches: new Map() 
             };
             
@@ -98,17 +123,20 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
               branchName,
               dispensed: 0,
               received: 0,
+              stock: 0,
               utilizationRate: 0
             };
             
             branchData.dispensed += item.quantityDispensed;
             branchData.received += item.quantityReceived;
+            branchData.stock += item.beginningInventory + item.quantityReceived - item.quantityDispensed;
             branchData.utilizationRate = branchData.received > 0 
               ? (branchData.dispensed / branchData.received) * 100 
               : 0;
             
             existing.dispensed += item.quantityDispensed;
             existing.received += item.quantityReceived;
+            existing.stock += item.beginningInventory + item.quantityReceived - item.quantityDispensed;
             existing.branches.set(branchName, branchData);
             
             drugMap.set(item.drugName, existing);
@@ -122,16 +150,20 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
           drugName,
           totalDispensed: data.dispensed,
           totalReceived: data.received,
+          totalStock: data.stock,
           utilizationRate: data.received > 0 ? Math.min((data.dispensed / data.received) * 100, 100) : 0,
           branchCount: data.branches.size,
-          branches: Array.from(data.branches.values()).sort((a, b) => b.dispensed - a.dispensed)
+          branches: Array.from(data.branches.values()).sort((a, b) => b.stock - a.stock)
         }))
-        .filter(drug => drug.totalDispensed > 0) // Only show drugs that have been dispensed
-        .sort((a, b) => b.totalDispensed - a.totalDispensed) // Sort by total dispensed
+        // Only show drugs that have some stock
+        .filter(drug => drug.totalStock > 0 || drug.totalDispensed > 0) 
+        // Sort by total stock instead of dispensed, since dispensed is no longer tracked in SQL
+        .sort((a, b) => b.totalStock - a.totalStock) 
         .slice(0, 10); // Top 10
       
       console.log('📈 [HomeView] Processed', drugUtilization.length, 'top utilized drugs');
       setTopUtilizedDrugs(drugUtilization);
+      setAdminInventory(allInventoryItems);
       setLastRefreshTime(new Date());
     } catch (error) {
       console.error('❌ [HomeView] Error fetching top utilized drugs:', error);
@@ -191,11 +223,12 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
     const utilizationRate = totalReceived > 0 ? Math.round((totalDispensed / totalReceived) * 100) : 0;
 
     // Calculate top utilized drugs in this branch
-    const drugUtilizationMap = new Map<string, { dispensed: number; received: number }>();
+    const drugUtilizationMap = new Map<string, { dispensed: number; received: number; stock: number }>();
     inventory.forEach(item => {
-      const existing = drugUtilizationMap.get(item.drugName) || { dispensed: 0, received: 0 };
+      const existing = drugUtilizationMap.get(item.drugName) || { dispensed: 0, received: 0, stock: 0 };
       existing.dispensed += item.quantityDispensed;
       existing.received += item.quantityReceived;
+      existing.stock += item.beginningInventory + item.quantityReceived - item.quantityDispensed;
       drugUtilizationMap.set(item.drugName, existing);
     });
 
@@ -204,10 +237,11 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
         drugName,
         dispensed: data.dispensed,
         received: data.received,
+        stock: data.stock,
         utilizationRate: data.received > 0 ? Math.min((data.dispensed / data.received) * 100, 100) : 0
       }))
-      .filter(drug => drug.dispensed > 0)
-      .sort((a, b) => b.dispensed - a.dispensed)
+      .filter(drug => drug.stock > 0 || drug.dispensed > 0)
+      .sort((a, b) => b.stock - a.stock)
       .slice(0, 5); // Top 5 drugs
 
     const stats = [
@@ -446,9 +480,9 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
               <CardContent className="pt-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm text-gray-600 mb-1">Total Units Dispensed</p>
+                    <p className="text-sm text-gray-600 mb-1">Total Units In Stock</p>
                     <p className="text-3xl font-bold text-gray-800">
-                      {topUtilizedDrugs.reduce((sum, d) => sum + d.totalDispensed, 0).toLocaleString()}
+                      {topUtilizedDrugs.reduce((sum, d) => sum + d.totalStock, 0).toLocaleString()}
                     </p>
                   </div>
                   <div className="w-14 h-14 bg-purple-100 rounded-2xl flex items-center justify-center">
@@ -482,7 +516,7 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-3 text-2xl text-gray-800">
                 <Award className="w-7 h-7 text-[#9867C5]" />
-                Top 10 Most Utilized Drugs
+                Top 10 Most Stocked Drugs
               </CardTitle>
               <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm">
                 <Building className="w-4 h-4 text-gray-600" />
@@ -491,7 +525,7 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
             </div>
             <p className="text-sm text-gray-600 mt-2 flex items-center gap-2">
               <TrendingUp className="w-4 h-4" />
-              Ranked by total quantity dispensed • Click on a drug to see branch breakdown
+              Ranked by total quantity in stock • Click on a drug to see branch breakdown
             </p>
           </CardHeader>
           <CardContent className="p-6">
@@ -533,7 +567,7 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
                           <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
                             <span className="flex items-center gap-1.5 bg-white px-3 py-1 rounded-full">
                               <Package className="w-4 h-4 text-blue-600" />
-                              <strong className="text-gray-800">{drug.totalDispensed.toLocaleString()}</strong> dispensed
+                              <strong className="text-gray-800">{drug.totalStock.toLocaleString()}</strong> in stock
                             </span>
                             <span className="flex items-center gap-1.5 bg-white px-3 py-1 rounded-full">
                               <Building className="w-4 h-4 text-purple-600" />
@@ -587,8 +621,8 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
                               </div>
                               <div className="space-y-1.5 text-xs text-gray-600">
                                 <div className="flex justify-between">
-                                  <span>Dispensed:</span>
-                                  <strong className="text-gray-800">{branch.dispensed.toLocaleString()}</strong>
+                                  <span>In Stock:</span>
+                                  <strong className="text-gray-800">{branch.stock.toLocaleString()}</strong>
                                 </div>
                                 <div className="flex justify-between">
                                   <span>Received:</span>

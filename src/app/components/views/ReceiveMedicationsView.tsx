@@ -283,7 +283,7 @@ export function ReceiveMedicationsView({ onAddStock, existingDrugs = [], invento
                     }}
                     onFocus={() => setShowUnitSuggestions(true)}
                     onBlur={() => setTimeout(() => setShowUnitSuggestions(false), 200)}
-                    placeholder="Type unit (e.g., vial, tablet)..."
+                    placeholder="Type unit (e.g., tablet, capsule, bottle)..."
                     required
                     className="pl-10 border-gray-300"
                   />
