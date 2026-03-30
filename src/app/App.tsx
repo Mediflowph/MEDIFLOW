@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Toaster, toast } from 'sonner';
 import { supabase } from '@/app/utils/supabase';
+import { authManager } from '@/app/utils/authManager';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
+import { kvStore } from '@/app/utils/kvStore';
 import { LoginPage } from '@/app/components/auth/LoginPage';
 import { Sidebar } from '@/app/components/Sidebar';
 import { Header } from '@/app/components/Header';
@@ -194,214 +196,147 @@ export default function App() {
   const [activeMenuItem, setActiveMenuItem] = useState('home');
   const [inventory, setInventory] = useState<InventoryBatch[]>([]);
   const [session, setSession] = useState<any>(null);
+  const [currentBranch, setCurrentBranch] = useState<{ id: string; name: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
 
-  // Get fresh authentication token
+  // Get fresh authentication token using centralized auth manager
   const getFreshToken = async (): Promise<string | null> => {
-    try {
-      console.log('🔄 Getting fresh authentication token...');
-      const { data: { session: currentSession }, error } = await supabase.auth.getSession();
-      
-      if (error || !currentSession) {
-        console.error('❌ Failed to get session:', error);
-        return null;
+    const token = await authManager.getToken();
+    if (token) {
+      // Update session state if we got a valid token
+      const currentSession = await authManager.getSession();
+      if (currentSession) {
+        setSession(currentSession);
       }
-      
-      console.log('✅ Fresh token obtained');
-      // Update the session state with fresh token
-      setSession(currentSession);
-      return currentSession.access_token;
-    } catch (error) {
-      console.error('❌ Error getting fresh token:', error);
-      return null;
     }
+    return token;
   };
 
   // Fetch inventory from Supabase
-  const fetchInventory = async (token?: string) => {
+  const fetchInventory = async (branchId: string) => {
     try {
-      console.log('📥 Fetching inventory from server...');
-      
-      // Get fresh token if not provided or if provided token might be stale
-      const freshToken = token || await getFreshToken();
-      
-      if (!freshToken) {
-        console.log('⚠️ No token available, user not logged in - skipping fetch');
-        // Don't set inventory or show errors when not logged in
+      console.log('📥 Fetching inventory for branch from SQL...', branchId);
+      if (!branchId) {
         setIsDataLoaded(false);
         return;
       }
-      
-      console.log('🔑 User token:', freshToken ? `${freshToken.substring(0, 20)}...` : 'NO TOKEN');
-      
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory`, {
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'X-User-Token': freshToken
-        }
-      });
-      
-      if (response.ok) {
-        // Check if response has content before parsing
-        const contentType = response.headers.get('content-type');
-        if (!contentType || !contentType.includes('application/json')) {
-          console.error('⚠️ Response is not JSON:', contentType);
-          setInventory(generateMockData());
-          setIsDataLoaded(true);
-          return;
-        }
-        
-        const text = await response.text();
-        if (!text || text.trim() === '') {
-          console.log('🆕 Empty response - initializing with mock data');
-          setInventory(generateMockData());
-          setIsDataLoaded(true);
-          return;
-        }
-        
-        const data = JSON.parse(text);
-        console.log('📦 Fetched data from server:', data);
-        
-        if (data === null || data === undefined) {
-          console.log('🆕 New user detected - initializing with mock data');
-          const mockData = generateMockData();
-          setInventory(mockData);
-          setIsDataLoaded(true);
-        } else if (Array.isArray(data)) {
-          console.log('✅ Returning user - loading', data.length, 'inventory items');
-          setInventory(data);
-          setIsDataLoaded(true);
-        } else {
-          console.error('⚠️ Unexpected data format:', data);
-          setInventory(generateMockData());
-          setIsDataLoaded(true);
-        }
-      } else {
-        const errorText = await response.text();
-        console.error('❌ Failed to fetch inventory, status:', response.status);
-        console.error('Error response:', errorText);
-        
-        // If it's a 401 error (auth issue), try one more time with a fresh token
-        if (response.status === 401) {
-          console.log('🔄 Token expired, retrying with fresh token...');
-          const retryToken = await getFreshToken();
-          
-          if (retryToken && retryToken !== freshToken) {
-            // Retry with the new token
-            const retryResponse = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory`, {
-              headers: {
-                'Authorization': `Bearer ${publicAnonKey}`,
-                'X-User-Token': retryToken
-              }
-            });
-            
-            if (retryResponse.ok) {
-              const text = await retryResponse.text();
-              if (text && text.trim() !== '') {
-                const data = JSON.parse(text);
-                if (data === null || data === undefined) {
-                  setInventory(generateMockData());
-                } else if (Array.isArray(data)) {
-                  setInventory(data);
-                }
-                setIsDataLoaded(true);
-                return;
-              }
-            }
-          }
-          
-          // If retry failed, sign out silently (don't show error toast)
-          console.log('🔒 Session invalid, signing out...');
-          await supabase.auth.signOut();
-          setSession(null);
-          setInventory([]);
-          setIsDataLoaded(false);
-        } else {
-          // For non-auth errors, use mock data
-          setInventory(generateMockData());
-          setIsDataLoaded(true);
-        }
+
+      // Admins and Health Officers have "all" as branch ID - don't fetch inventory for them
+      if (branchId === 'all' || branchId === 'all-branches') {
+        console.log('ℹ️ Admin/Health Officer account - no branch-specific inventory');
+        setInventory([]);
+        setIsDataLoaded(true);
+        return;
       }
+
+      const token = await getFreshToken();
+      if (!token) {
+        console.error('❌ No authentication token available');
+        setInventory([]);
+        setIsDataLoaded(true);
+        return;
+      }
+
+      // Fetch from SQL database via backend API
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/${branchId}`,
+        {
+          headers: {
+            'X-User-Token': token,
+            'Authorization': `Bearer ${publicAnonKey}`
+          }
+        }
+      );
+
+      if (!response.ok) {
+        console.error('❌ Failed to fetch inventory - HTTP error:', response.status);
+        throw new Error('Failed to fetch inventory');
+      }
+
+      const data = await response.json();
+      console.log('✅ Fetched inventory from SQL:', data);
+
+      if (data && data.length > 0) {
+        // Transform SQL data to match the app's inventory format
+        const transformedInventory = data.map((item: any) => ({
+          id: item.id,
+          drugName: item.drug_name,
+          program: item.program || 'General',
+          dosage: item.dosage || '',
+          unit: item.unit || 'units',
+          batchNumber: item.batch_number || '',
+          beginningInventory: item.quantity || 0,
+          quantityReceived: 0,
+          dateReceived: item.date_received || item.created_at || '',
+          unitCost: item.unit_cost || item.unit_price || 0,
+          quantityDispensed: 0,
+          expirationDate: item.expiration_date || item.expiry_date || '',
+          remarks: item.remarks || ''
+        }));
+        setInventory(transformedInventory);
+      } else {
+        console.log('ℹ️ No inventory data found');
+        setInventory([]);
+      }
+      setIsDataLoaded(true);
     } catch (error) {
       console.error('❌ Error fetching inventory:', error);
-      // Only use mock data if we have a valid session
-      if (token) {
-        setInventory(generateMockData());
-        setIsDataLoaded(true);
-      } else {
-        // No session, don't load any data
-        setIsDataLoaded(false);
-      }
+      setInventory([]);
+      setIsDataLoaded(true);
     }
   };
 
-  // Sync inventory to Supabase with current session
-  const syncInventoryToCloud = async (inventoryData: InventoryBatch[], sessionToken?: string) => {
-    // Get fresh token if not provided
-    const token = sessionToken || await getFreshToken();
-    
-    if (!token) {
-      console.log('⚠️ Skipping sync - no session token');
-      return false;
-    }
-    
+  // Sync inventory to Supabase
+  const syncInventoryToCloud = async (inventoryData: InventoryBatch[], branchId: string) => {
+    if (!branchId) return false;
     setIsSyncing(true);
-    console.log('🔄 Syncing', inventoryData.length, 'items to cloud...');
-    console.log('🔑 User token:', token ? `${token.substring(0, 20)}...` : 'NO TOKEN');
+    console.log('🔄 Syncing to branch', branchId);
     
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-          'X-User-Token': token
-        },
-        body: JSON.stringify({ inventory: inventoryData })
-      });
-      
-      if (response.ok) {
-        const result = await response.json();
-        console.log('✅ Sync successful:', result);
-        setLastSyncTime(new Date());
-        setIsSyncing(false);
-        return true;
-      } else {
-        const errorText = await response.text();
-        console.error('❌ Sync failed:', response.status, errorText);
-        
-        // If 401, try with fresh token
-        if (response.status === 401 && sessionToken) {
-          console.log('🔄 Sync token expired, retrying with fresh token...');
-          const freshToken = await getFreshToken();
-          
-          if (freshToken && freshToken !== token) {
-            const retryResponse = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${publicAnonKey}`,
-                'X-User-Token': freshToken
-              },
-              body: JSON.stringify({ inventory: inventoryData })
-            });
-            
-            if (retryResponse.ok) {
-              const result = await retryResponse.json();
-              console.log('✅ Sync successful on retry:', result);
-              setLastSyncTime(new Date());
-              setIsSyncing(false);
-              return true;
-            }
-          }
-        }
-        
+      const token = await getFreshToken();
+      if (!token) {
+        console.error('❌ No authentication token available for sync');
         setIsSyncing(false);
         return false;
       }
+
+      // Transform inventory to SQL format
+      const transformedInventory = inventoryData.map(item => ({
+        drug_name: item.drugName,
+        generic_name: item.drugName, // Using drugName as generic for now
+        dosage: item.dosage || null,
+        quantity: (item.beginningInventory + item.quantityReceived - item.quantityDispensed) || 0,
+        expiry_date: item.expirationDate,
+        batch_number: item.batchNumber,
+        supplier: 'N/A',
+        unit_price: item.unitCost
+      }));
+
+      // Send to backend SQL API
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-User-Token': token,
+            'Authorization': `Bearer ${publicAnonKey}`
+          },
+          body: JSON.stringify({ inventory: transformedInventory })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error('Failed to sync inventory');
+      }
+
+      console.log('✅ Inventory synced to SQL database');
+      setLastSyncTime(new Date());
+      setIsSyncing(false);
+      return true;
     } catch (error) {
       console.error('❌ Sync error:', error);
       setIsSyncing(false);
@@ -409,23 +344,32 @@ export default function App() {
     }
   };
 
-  // Auto-sync whenever inventory changes
+  // Auto-sync whenever inventory changes (with debouncing)
   useEffect(() => {
-    if (isDataLoaded && session?.access_token && inventory) {
-      console.log('📊 Inventory changed, auto-syncing...');
-      const performSync = async () => {
-        const success = await syncInventoryToCloud(inventory, session.access_token);
-        if (success) {
-          // Silent success - status shown in header
-        } else {
-          toast.error('Sync Failed', { 
-            description: 'Failed to save to cloud. Changes may be lost on refresh.' 
-          });
-        }
-      };
-      performSync();
+    // Don't sync for admin/health officer accounts with "all" branches
+    if (currentBranch?.id === 'all' || currentBranch?.id === 'all-branches') {
+      console.log('ℹ️ Skipping auto-sync for admin account');
+      return;
     }
-  }, [inventory]); // Only trigger on inventory changes
+    
+    // Don't sync if currently syncing or data hasn't been initially loaded
+    if (isSyncing || !isDataLoaded || !currentBranch || inventory.length === 0) {
+      return;
+    }
+    
+    // Debounce sync operations to prevent continuous syncing
+    const syncTimeout = setTimeout(async () => {
+      console.log('📊 Inventory changed, auto-syncing...');
+      const success = await syncInventoryToCloud(inventory, currentBranch.id);
+      if (!success) {
+        toast.error('Sync Failed', { 
+          description: 'Failed to save to cloud. Changes may be lost on refresh.' 
+        });
+      }
+    }, 1000); // Wait 1 second before syncing to batch rapid changes
+    
+    return () => clearTimeout(syncTimeout);
+  }, [inventory, currentBranch?.id]); // Only trigger on inventory or branch changes
 
   // Ensure data loaded flag is properly set when session changes
   useEffect(() => {
@@ -478,11 +422,19 @@ export default function App() {
           if (initialSession) {
             console.log('Session found, loading user data...');
             setSession(initialSession);
-            await fetchInventory(initialSession.access_token);
+            // Update auth manager cache
+            authManager.updateCache(initialSession);
+            const savedBranch = localStorage.getItem('mediflow_current_branch');
+            if (savedBranch) {
+              const parsedBranch = JSON.parse(savedBranch);
+              setCurrentBranch(parsedBranch);
+              await fetchInventory(parsedBranch.id);
+            }
             setIsLoading(false); // Set loading false after fetch completes
           } else {
             console.log('No active session found');
             setSession(null);
+            authManager.clearCache();
             setIsDataLoaded(false);
             setIsLoading(false);
           }
@@ -502,17 +454,26 @@ export default function App() {
       
       if (event === 'SIGNED_IN') {
         setSession(currentSession);
-        if (currentSession && !isDataLoaded) {
-          await fetchInventory(currentSession.access_token);
+        authManager.updateCache(currentSession);
+        const savedBranch = localStorage.getItem('mediflow_current_branch');
+        if (savedBranch) {
+          const parsedBranch = JSON.parse(savedBranch);
+          setCurrentBranch(parsedBranch);
+          if (currentSession && !isDataLoaded) {
+            await fetchInventory(parsedBranch.id);
+          }
         }
         setIsLoading(false);
       } else if (event === 'TOKEN_REFRESHED') {
-        // Just update the session token, don't refetch data
         setSession(currentSession);
+        authManager.updateCache(currentSession);
         setIsLoading(false);
       } else if (event === 'SIGNED_OUT') {
         console.log('User signed out, clearing state');
         setSession(null);
+        authManager.clearCache();
+        setCurrentBranch(null);
+        localStorage.removeItem('mediflow_current_branch');
         setInventory([]);
         setIsDataLoaded(false);
         setActiveMenuItem('home');
@@ -526,17 +487,28 @@ export default function App() {
     };
   }, []);
 
-  const handleLogin = (newSession: any) => {
-    // onAuthStateChange handles the logic, but we can set it here for immediate UI update
+  const handleLogin = (newSession: any, branch: { id: string; name: string }) => {
     console.log('📝 Login session object:', {
       hasAccessToken: !!newSession?.access_token,
       hasUser: !!newSession?.user,
       userId: newSession?.user?.id,
-      tokenPreview: newSession?.access_token ? `${newSession.access_token.substring(0, 30)}...` : 'NO TOKEN'
+      tokenPreview: newSession?.access_token ? `${newSession.access_token.substring(0, 30)}...` : 'NO TOKEN',
+      branch
     });
     
     setSession(newSession);
-    fetchInventory(newSession.access_token);
+    setCurrentBranch(branch);
+    localStorage.setItem('mediflow_current_branch', JSON.stringify(branch));
+    fetchInventory(branch.id);
+    
+    // Log the audit event
+    kvStore.addAuditLog({
+      userId: newSession.user.id,
+      userName: newSession.user.user_metadata?.name || newSession.user.email,
+      branchId: branch.id,
+      branchName: branch.name,
+    }).catch(console.error);
+
     const role = newSession.user.user_metadata.role || 'User';
     const name = newSession.user.user_metadata.name || newSession.user.email;
     
@@ -547,7 +519,7 @@ export default function App() {
       setActiveMenuItem('home');
     }
     
-    toast.success('Access Granted', { description: `Welcome back, ${name} (${role})` });
+    toast.success('Access Granted', { description: `Welcome back, ${name} (${role}) at ${branch.name}` });
   };
 
   const handleLogout = async () => {
@@ -559,6 +531,8 @@ export default function App() {
       
       // Clear all local application state
       setSession(null);
+      setCurrentBranch(null);
+      localStorage.removeItem('mediflow_current_branch');
       setInventory([]);
       setIsDataLoaded(false);
       setActiveMenuItem('home');
@@ -569,6 +543,7 @@ export default function App() {
       console.error('Logout error:', error);
       // Emergency state clearing
       setSession(null);
+      setCurrentBranch(null);
       setInventory([]);
       setIsDataLoaded(false);
       localStorage.clear(); // Nuclear option to ensure persistence is gone
@@ -597,7 +572,7 @@ export default function App() {
           userToken={session?.access_token} 
           userRole={userRole}
           userName={userName}
-          branchName={session?.user?.user_metadata?.branch || 'Unknown Branch'}
+          branchName={currentBranch?.name || 'Unknown Branch'}
         />; 
       case 'alerts':
         return <AlertsView inventory={inventory} userToken={session?.access_token} userRole={userRole} />;
