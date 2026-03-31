@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { FileText, Download, FileSpreadsheet, Pill, Building, RefreshCw, Calendar, Filter, X } from 'lucide-react';
+import { FileText, Download, FileSpreadsheet, Pill, Building, RefreshCw, Calendar, Filter, X, ShieldCheck, ToggleLeft, ToggleRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { InventoryBatch } from '@/app/types/inventory';
 import { exportToExcel, generateExcelReportWithBranchInfo } from '@/app/utils/exportUtils';
@@ -26,6 +26,7 @@ interface ReportFilters {
   dateFrom: string;
   dateTo: string;
   program: string;
+  category: string;
   drugName: string;
   expiryStatus: 'all' | 'expired' | 'near-expiry' | 'valid';
   stockStatus: 'all' | 'low' | 'normal' | 'out-of-stock';
@@ -36,6 +37,7 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
   const [isLoading, setIsLoading] = useState(false);
   const [generatingReportFor, setGeneratingReportFor] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [datePeriod, setDatePeriod] = useState<'all' | 'monthly' | 'yearly'>('all');
   
   // Date range defaults: Current quarter
   const getQuarterDates = () => {
@@ -56,9 +58,10 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
   const quarterDates = getQuarterDates();
   
   const [filters, setFilters] = useState<ReportFilters>({
-    dateFrom: '', // Empty by default - show all data
-    dateTo: '',   // Empty by default - show all data
+    dateFrom: '',
+    dateTo: '',
     program: 'all',
+    category: 'all',
     drugName: '',
     expiryStatus: 'all',
     stockStatus: 'all',
@@ -104,6 +107,9 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
 
       // Program filter
       if (filters.program !== 'all' && batch.program !== filters.program) return false;
+
+      // Category filter
+      if (filters.category !== 'all' && (batch.category || 'Others') !== filters.category) return false;
 
       // Drug name filter
       if (filters.drugName && !batch.drugName.toLowerCase().includes(filters.drugName.toLowerCase())) return false;
@@ -157,18 +163,39 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
       dateFrom: '',
       dateTo: '',
       program: 'all',
+      category: 'all',
       drugName: '',
       expiryStatus: 'all',
       stockStatus: 'all',
     });
+    setDatePeriod('all');
   };
 
   const activeFilterCount = [
     filters.program !== 'all',
+    filters.category !== 'all',
     filters.drugName !== '',
     filters.expiryStatus !== 'all',
     filters.stockStatus !== 'all',
+    filters.dateFrom !== '' || filters.dateTo !== '',
   ].filter(Boolean).length;
+
+  // Apply period preset → update dateFrom/dateTo
+  const applyPeriodPreset = (period: 'all' | 'monthly' | 'yearly') => {
+    setDatePeriod(period);
+    const now = new Date();
+    if (period === 'monthly') {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+      const end   = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+      setFilters(f => ({ ...f, dateFrom: start, dateTo: end }));
+    } else if (period === 'yearly') {
+      const start = new Date(now.getFullYear(), 0, 1).toISOString().split('T')[0];
+      const end   = new Date(now.getFullYear(), 11, 31).toISOString().split('T')[0];
+      setFilters(f => ({ ...f, dateFrom: start, dateTo: end }));
+    } else {
+      setFilters(f => ({ ...f, dateFrom: '', dateTo: '' }));
+    }
+  };
 
   // Fetch all branches for Admin/HO
   const fetchAllBranches = async () => {
@@ -496,10 +523,25 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
           </div>
           <div>
             <h2 className="text-2xl font-bold text-gray-800">Physical Inventory Report</h2>
-          
           </div>
         </div>
         <div className="flex gap-3">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors shadow-md border ${
+              showFilters || activeFilterCount > 0
+                ? 'bg-[#9867C5] text-white border-[#9867C5]'
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+            }`}
+          >
+            <Filter className="w-4 h-4" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="bg-white text-[#9867C5] text-xs font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
           <button
             onClick={handleExportExcel}
             className="flex items-center gap-2 px-4 py-2 bg-[#9867C5] hover:bg-[#9867C5]/90 text-white rounded-lg transition-colors shadow-md"
@@ -510,128 +552,307 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
         </div>
       </div>
 
-      {/* Report Header Info */}
-      <Card className="border-none shadow-md bg-[#fff9c4]/30">
-        <CardContent className="pt-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <p className="text-xs text-[#f57f17] font-bold uppercase">Drug Inventory System</p>
-              <p className="font-semibold text-gray-800">{branchName ? ` ${branchName}` : ' Drug Inventory System'}
-          </p>
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase font-bold">Reporting Quarter</p>
-              <p className="font-semibold text-gray-800">Q3 (July - September 2025)</p>
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase font-bold">Total Items Tracked</p>
-              <p className="font-semibold text-gray-800">{inventory.length} Batches</p>
-            </div>
-            <div>
-      
-              <p className="font-semibold text-[#9867C5]">DOH Augmentation/Donation</p>
+      {/* Filter Panel */}
+      {showFilters && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-md p-5 space-y-5">
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+              <Filter className="w-4 h-4 text-[#9867C5]" />
+              Filter Report Data
+            </h3>
+            <button onClick={resetFilters} className="text-xs text-gray-500 hover:text-red-500 flex items-center gap-1 transition-colors">
+              <X className="w-3 h-3" />
+              Reset all
+            </button>
+          </div>
+
+          {/* Period Presets */}
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Date Period</label>
+            <div className="flex items-center gap-2 flex-wrap">
+              {[
+                { value: 'all',     label: 'All Time' },
+                { value: 'monthly', label: `This Month (${new Date().toLocaleString('default', { month: 'long' })})` },
+                { value: 'yearly',  label: `This Year (${new Date().getFullYear()})` },
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => applyPeriodPreset(opt.value as any)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all border ${
+                    datePeriod === opt.value
+                      ? 'bg-[#9867C5] text-white border-[#9867C5]'
+                      : 'bg-gray-50 text-gray-700 border-gray-200 hover:border-[#9867C5]/50'
+                  }`}
+                >
+                  {datePeriod === opt.value && opt.value !== 'all' ? '✓ ' : ''}{opt.label}
+                </button>
+              ))}
             </div>
           </div>
-        </CardContent>
-      </Card>
+
+          {/* Custom Date Range */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                Date From
+              </label>
+              <input
+                type="date"
+                value={filters.dateFrom}
+                onChange={e => { setFilters(f => ({ ...f, dateFrom: e.target.value })); setDatePeriod('all'); }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                Date To
+              </label>
+              <input
+                type="date"
+                value={filters.dateTo}
+                onChange={e => { setFilters(f => ({ ...f, dateTo: e.target.value })); setDatePeriod('all'); }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+          </div>
+
+          {/* Program + Category + Drug + Status */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Program */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Program</label>
+              <select
+                value={filters.program}
+                onChange={e => setFilters(f => ({ ...f, program: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none bg-white"
+              >
+                <option value="all">All Programs</option>
+                {uniquePrograms.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+
+            {/* Category */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3" />
+                Category
+              </label>
+              <select
+                value={filters.category}
+                onChange={e => setFilters(f => ({ ...f, category: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none bg-white"
+              >
+                <option value="all">All Categories</option>
+                <option value="Antimicrobial">Antimicrobial</option>
+                <option value="Non-antimicrobial">Non-antimicrobial</option>
+                <option value="Others">Others</option>
+              </select>
+            </div>
+
+            {/* Expiry Status */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Expiry Status</label>
+              <select
+                value={filters.expiryStatus}
+                onChange={e => setFilters(f => ({ ...f, expiryStatus: e.target.value as any }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none bg-white"
+              >
+                <option value="all">All</option>
+                <option value="valid">Valid (&gt;180 days)</option>
+                <option value="near-expiry">Near Expiry (≤180 days)</option>
+                <option value="expired">Expired</option>
+              </select>
+            </div>
+
+            {/* Stock Status */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Stock Status</label>
+              <select
+                value={filters.stockStatus}
+                onChange={e => setFilters(f => ({ ...f, stockStatus: e.target.value as any }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none bg-white"
+              >
+                <option value="all">All</option>
+                <option value="normal">Normal Stock</option>
+                <option value="low">Low Stock</option>
+                <option value="out-of-stock">Out of Stock</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Drug Name search */}
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Drug Name Search</label>
+            <input
+              type="text"
+              placeholder="Filter by drug name..."
+              value={filters.drugName}
+              onChange={e => setFilters(f => ({ ...f, drugName: e.target.value }))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+            />
+          </div>
+
+          {/* Active filter summary */}
+          {activeFilterCount > 0 && (
+            <div className="flex flex-wrap gap-2 pt-1 border-t border-gray-100">
+              <span className="text-xs text-gray-500 self-center">{filteredInventory.length} of {inventory.length} items shown</span>
+              {filters.category !== 'all' && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-xs font-medium">
+                  <ShieldCheck className="w-3 h-3" />
+                  {filters.category}
+                  <button onClick={() => setFilters(f => ({ ...f, category: 'all' }))} className="hover:text-red-500 ml-0.5">×</button>
+                </span>
+              )}
+              {filters.program !== 'all' && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#9867C5]/10 text-[#9867C5] rounded-full text-xs font-medium">
+                  {filters.program}
+                  <button onClick={() => setFilters(f => ({ ...f, program: 'all' }))} className="hover:text-red-500 ml-0.5">×</button>
+                </span>
+              )}
+              {(filters.dateFrom || filters.dateTo) && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                  <Calendar className="w-3 h-3" />
+                  {filters.dateFrom || '…'} → {filters.dateTo || '…'}
+                  <button onClick={() => { setFilters(f => ({ ...f, dateFrom: '', dateTo: '' })); setDatePeriod('all'); }} className="hover:text-red-500 ml-0.5">×</button>
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Report Header Info */}
+      <div className="bg-[#fff9c4]/30 border border-[#fde68a] rounded-xl p-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div>
+            <p className="text-xs text-[#f57f17] font-bold uppercase">Drug Inventory System</p>
+            <p className="font-semibold text-gray-800">{branchName || 'Drug Inventory System'}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase font-bold">Period</p>
+            <p className="font-semibold text-gray-800">
+              {datePeriod === 'monthly' ? new Date().toLocaleString('default', { month: 'long', year: 'numeric' })
+              : datePeriod === 'yearly'  ? new Date().getFullYear().toString()
+              : 'All Time'}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase font-bold">Items Shown</p>
+            <p className="font-semibold text-gray-800">{filteredInventory.length} of {inventory.length} Batches</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase font-bold">Category</p>
+            <p className="font-semibold text-[#9867C5]">{filters.category === 'all' ? 'All Categories' : filters.category}</p>
+          </div>
+        </div>
+      </div>
 
       {/* DOH Format Report Table */}
-      <Card className="border-none shadow-md">
-        <CardHeader className="border-b bg-gradient-to-r from-[#9867C5]/10 to-[#9867C5]/5">
-          <CardTitle className="flex items-center gap-2 text-gray-800">
-            <FileText className="w-5 h-5 text-[#9867C5]" />
-            Inventory Report (DOH Format)
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-6">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
-              <thead className="bg-gray-100">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-md overflow-hidden">
+        <div className="flex items-center gap-2 px-4 py-3 border-b bg-gradient-to-r from-[#9867C5]/10 to-[#9867C5]/5">
+          <FileText className="w-5 h-5 text-[#9867C5]" />
+          <span className="font-semibold text-gray-800">Inventory Report (DOH Format)</span>
+          {activeFilterCount > 0 && (
+            <span className="ml-auto text-xs bg-[#9867C5]/10 text-[#9867C5] px-2 py-0.5 rounded-full font-medium">
+              {filteredInventory.length} results
+            </span>
+          )}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead className="bg-gray-100 sticky top-0">
+              <tr>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">No.</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Name & Description</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Program</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Category</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Beg. Inventory</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Batch/Lot No.</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Unit</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Qty Received</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Unit Cost</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Total Cost</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Dispensed</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Stock on Hand</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Utilization %</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Expiry Date</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Expired</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredInventory.length === 0 ? (
                 <tr>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">No.</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Name & Description</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Program</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Beginning Inventory</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Items Received</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Unit</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Qty Received</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Unit Cost</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Total Cost</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Dispensed</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Stock on Hand</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Utilization %</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Expiry Date</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Expired</th>
-                  <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Remarks</th>
+                  <td colSpan={15} className="border border-gray-300 px-3 py-8 text-center text-gray-500">
+                    <Pill className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                    <p>No inventory data matches the selected filters</p>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filteredInventory.length === 0 ? (
-                  <tr>
-                    <td colSpan={15} className="border border-gray-300 px-3 py-6 text-center text-gray-500">
-                      No inventory data available
-                    </td>
-                  </tr>
-                ) : (
-                  filteredInventory.map((batch, index) => {
-                    const totalCost = batch.quantityReceived * batch.unitCost;
-                    const stockOnHand = getStockOnHand(batch);
-                    const utilization = calculateUtilization(batch);
-                    const expired = isExpired(batch.expirationDate);
+              ) : (
+                filteredInventory.map((batch, index) => {
+                  const totalCost   = batch.quantityReceived * batch.unitCost;
+                  const stockOnHand = getStockOnHand(batch);
+                  const utilization = calculateUtilization(batch);
+                  const expired     = isExpired(batch.expirationDate);
+                  const cat         = batch.category || 'Others';
 
-                    return (
-                      <tr key={batch.id} className="hover:bg-gray-50">
-                        <td className="border border-gray-300 px-3 py-2 text-gray-700">{index + 1}</td>
-                        <td className="border border-gray-300 px-3 py-2 text-gray-700">
-                          <div>
-                            <p className="font-medium">{batch.drugName}</p>
-                            <p className="text-xs text-gray-500">{batch.dosage}</p>
-                          </div>
-                        </td>
-                        <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.program}</td>
-                        <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{batch.beginningInventory}</td>
-                        <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.batchNumber}</td>
-                        <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.unit}</td>
-                        <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{batch.quantityReceived}</td>
-                        <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{formatPeso(batch.unitCost)}</td>
-                        <td className="border border-gray-300 px-3 py-2 text-right font-medium text-gray-700">{formatPeso(totalCost)}</td>
-                        <td className="border border-gray-300 px-3 py-2 text-right text-blue-600">{batch.quantityDispensed}</td>
-                        <td className="border border-gray-300 px-3 py-2 text-right font-semibold text-[#9867C5]">{stockOnHand}</td>
-                        <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{utilization}%</td>
-                        <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.expirationDate}</td>
-                        <td className="border border-gray-300 px-3 py-2">
-                          <span className={`inline-block px-2 py-1 rounded text-xs font-medium ${
-                            expired ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                          }`}>
-                            {expired ? 'Yes' : 'No'}
-                          </span>
-                        </td>
-                        <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.remarks || '-'}</td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+                  return (
+                    <tr key={batch.id} className="hover:bg-gray-50">
+                      <td className="border border-gray-300 px-3 py-2 text-gray-700">{index + 1}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-gray-700">
+                        <div>
+                          <p className="font-medium">{batch.drugName}</p>
+                          <p className="text-xs text-gray-500">{batch.dosage}</p>
+                        </div>
+                      </td>
+                      <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.program}</td>
+                      <td className="border border-gray-300 px-3 py-2">
+                        <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+                          cat === 'Antimicrobial'     ? 'bg-emerald-100 text-emerald-700' :
+                          cat === 'Non-antimicrobial' ? 'bg-blue-100 text-blue-700' :
+                                                        'bg-gray-100 text-gray-600'
+                        }`}>
+                          {cat}
+                        </span>
+                      </td>
+                      <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{batch.beginningInventory}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.batchNumber}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.unit}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{batch.quantityReceived}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{formatPeso(batch.unitCost)}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-right font-medium text-gray-700">{formatPeso(totalCost)}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-right text-blue-600">{batch.quantityDispensed}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-right font-semibold text-[#9867C5]">{stockOnHand}</td>
+                      <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{utilization}%</td>
+                      <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.expirationDate}</td>
+                      <td className="border border-gray-300 px-3 py-2">
+                        <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${
+                          expired ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                        }`}>
+                          {expired ? 'Yes' : 'No'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {/* Report Legend */}
-      <Card className="border-l-4 border-[#9867C5] bg-[#9867C5]/5">
-        <CardContent className="pt-4">
-          <div className="flex items-start gap-3">
-            <FileText className="w-5 h-5 text-[#9867C5] mt-1" />
-            <div>
-              <p className="font-semibold text-gray-800 mb-1">Official DOH Report Format</p>
-              <p className="text-sm text-gray-600">
-                This report follows the Department of Health Physical Inventory Report format (BGO.HSO.F.PHAR.009). 
-                Export to Excel to generate the official formatted document with proper headers, merged cells, and program grouping.
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="border-l-4 border-[#9867C5] bg-[#9867C5]/5 rounded-r-xl p-4 flex items-start gap-3">
+        <FileText className="w-5 h-5 text-[#9867C5] mt-0.5 flex-shrink-0" />
+        <div>
+          <p className="font-semibold text-gray-800 mb-1">Official DOH Report Format</p>
+          <p className="text-sm text-gray-600">
+            This report follows the Department of Health Physical Inventory Report format (BGO.HSO.F.PHAR.009).
+            Export to Excel to generate the official formatted document with proper headers, merged cells, and program grouping.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }

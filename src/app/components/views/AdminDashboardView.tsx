@@ -804,7 +804,7 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
                     Quick Start with Sample Data
                   </p>
                   <p className="text-xs text-gray-600">
-                    Instantly add 30 comprehensive medicine items to all branches (Pain Relief, Antibiotics, Cardiovascular, Diabetes, Respiratory, Vitamins, and more)
+                    Instantly add 30 DOH Philippine health program medicines to all branches (EREID Program, NIP Vaccines, TB Program, Maternal &amp; Child Health, Malaria Program, and more)
                   </p>
                 </div>
                 <button
@@ -819,36 +819,10 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
             </CardContent>
           </Card>
 
-          <Card className="border-none shadow-md bg-gradient-to-br from-blue-50 to-indigo-50">
-            <CardHeader className="border-b bg-gradient-to-r from-blue-500/10 to-indigo-500/10">
-              <CardTitle className="text-gray-800 flex items-center gap-2">
-                <Users className="w-5 h-5 text-blue-600" />
-                Sync User-Branch Assignments
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1">
-                  <p className="text-sm text-gray-700 font-medium mb-1">
-                    Fix Stock Locator "0 branches" Issue
-                  </p>
-                  <p className="text-xs text-gray-600">
-                    Assigns all Pharmacy Staff users to their branches based on account metadata. This enables Stock Locator to display inventory across all branches.
-                  </p>
-                </div>
-                <button
-                  onClick={handleSyncUserBranches}
-                  disabled={isSyncingUsers}
-                  className="px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap shadow-md"
-                >
-                  <Users className="w-4 h-4" />
-                  {isSyncingUsers ? 'Syncing...' : 'Sync All Users'}
-                </button>
-              </div>
-            </CardContent>
-          </Card>
 
-          <Card className="border-none shadow-md bg-gradient-to-br from-amber-50 to-orange-50">
+
+          {/* Diagnostic card removed */}
+          {false && <Card className="border-none shadow-md bg-gradient-to-br from-amber-50 to-orange-50">
             <CardHeader className="border-b bg-gradient-to-r from-amber-500/10 to-orange-500/10">
               <CardTitle className="text-gray-800 flex items-center gap-2">
                 <Search className="w-5 h-5 text-amber-600" />
@@ -1020,7 +994,7 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
                 </div>
               )}
             </CardContent>
-          </Card>
+          </Card>}
 
           <Card className="border-none shadow-md">
             <CardHeader className="border-b bg-gradient-to-r from-[#9867C5]/10 to-[#9867C5]/5">

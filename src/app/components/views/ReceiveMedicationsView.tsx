@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Plus, PackagePlus, Search } from 'lucide-react';
+import { Plus, PackagePlus, Search, ChevronDown } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
@@ -35,10 +35,18 @@ const DOSAGE_SUGGESTIONS = [
   '5mg', '2.5mg', '100mg/5ml', '250mg/5ml', '20mg', '40mg'
 ];
 
+// Category options
+const DRUG_CATEGORIES = [
+  { value: 'Antimicrobial',     label: 'Antimicrobial',     description: 'Antibiotics, antivirals, antifungals, antiparasitics' },
+  { value: 'Non-antimicrobial', label: 'Non-antimicrobial', description: 'Vaccines, vitamins, analgesics, etc.' },
+  { value: 'Others',            label: 'Others',            description: 'Supplies or drugs not in the above categories' },
+];
+
 export function ReceiveMedicationsView({ onAddStock, existingDrugs = [], inventory = [] }: ReceiveMedicationsViewProps) {
   const [formData, setFormData] = useState({
     drugName: '',
     program: '',
+    category: '',
     dosage: '',
     unit: '',
     batchNumber: '',
@@ -125,6 +133,7 @@ export function ReceiveMedicationsView({ onAddStock, existingDrugs = [], invento
     setFormData({
       drugName: '',
       program: '',
+      category: '',
       dosage: '',
       unit: '',
       batchNumber: '',
@@ -231,6 +240,46 @@ export function ReceiveMedicationsView({ onAddStock, existingDrugs = [], invento
                       </button>
                     ))}
                   </div>
+                )}
+              </div>
+
+              {/* Category Dropdown */}
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="category">
+                  Category *
+                  <span className="ml-2 text-xs text-gray-400 font-normal">Used for reporting and utilization tracking</span>
+                </Label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {DRUG_CATEGORIES.map((cat) => (
+                    <button
+                      key={cat.value}
+                      type="button"
+                      onClick={() => handleChange('category', cat.value)}
+                      className={`flex flex-col items-start p-3 rounded-xl border-2 transition-all text-left ${
+                        formData.category === cat.value
+                          ? cat.value === 'Antimicrobial'
+                            ? 'border-emerald-500 bg-emerald-50'
+                            : cat.value === 'Non-antimicrobial'
+                              ? 'border-blue-500 bg-blue-50'
+                              : 'border-gray-500 bg-gray-50'
+                          : 'border-gray-200 hover:border-gray-300 bg-white'
+                      }`}
+                    >
+                      <span className={`text-sm font-semibold mb-0.5 ${
+                        formData.category === cat.value
+                          ? cat.value === 'Antimicrobial' ? 'text-emerald-700'
+                          : cat.value === 'Non-antimicrobial' ? 'text-blue-700'
+                          : 'text-gray-700'
+                          : 'text-gray-700'
+                      }`}>
+                        {formData.category === cat.value ? '✓ ' : ''}{cat.label}
+                      </span>
+                      <span className="text-xs text-gray-500">{cat.description}</span>
+                    </button>
+                  ))}
+                </div>
+                {!formData.category && (
+                  <p className="text-xs text-amber-600">Please select a category</p>
                 )}
               </div>
 
@@ -408,7 +457,8 @@ export function ReceiveMedicationsView({ onAddStock, existingDrugs = [], invento
             <div className="flex justify-end pt-4">
               <button
                 type="submit"
-                className="flex items-center gap-2 px-6 py-3 bg-[#9867C5] hover:bg-[#9867C5]/90 text-white rounded-lg font-medium transition-colors"
+                disabled={!formData.category}
+                className="flex items-center gap-2 px-6 py-3 bg-[#9867C5] hover:bg-[#9867C5]/90 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Plus className="w-5 h-5" />
                 Add to Inventory
