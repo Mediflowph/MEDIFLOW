@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ShieldCheck, Pill, Lock, Mail, User, AlertCircle, UserPlus, ArrowRight, Building, Eye, EyeOff } from 'lucide-react';
+import { ShieldCheck, Pill, Lock, Mail, User, AlertCircle, UserPlus, ArrowRight, Building, Eye, EyeOff, KeyRound } from 'lucide-react';
 import { supabase } from '@/app/utils/supabase';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
 import { toast } from 'sonner';
@@ -45,6 +45,10 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [isSendingReset, setIsSendingReset] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   useEffect(() => {
     // Load branches with inventory status
@@ -270,6 +274,52 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
     }
   };
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotEmail) {
+      toast.error('Please enter your email address');
+      return;
+    }
+    
+    try {
+      setIsSendingReset(true);
+
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/forgot-password`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({
+            email: forgotEmail,
+            redirectTo: `${window.location.origin}`,
+          }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        // Include Resend's actual error body so the root cause is visible
+        const detail = result.details ? ` — ${result.details}` : '';
+        throw new Error((result.error || 'Failed to send reset email') + detail);
+      }
+
+      setResetSent(true);
+      toast.success('Password Reset Email Sent', {
+        description: 'Check your inbox for the password reset link.',
+        duration: 6000,
+      });
+    } catch (err: any) {
+      console.error('Forgot password error:', err);
+      toast.error('Error', { description: err.message || 'Failed to send reset email' });
+    } finally {
+      setIsSendingReset(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#9867C5] via-[#9867C5]/90 to-[#9867C5] flex items-center justify-center p-4">
       <motion.div 
@@ -285,6 +335,73 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
             <h1 className="text-3xl font-bold text-[#9867C5]">MediFlow</h1>
             <p className="text-gray-500 text-sm">Drug Inventory Management System</p>
           </div>
+
+          {/* Forgot Password Modal */}
+          <AnimatePresence>
+            {showForgotPassword && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mb-6 p-5 bg-[#9867C5]/5 border border-[#9867C5]/20 rounded-2xl"
+              >
+                <div className="flex items-center gap-2 mb-3">
+                  <KeyRound className="w-5 h-5 text-[#9867C5]" />
+                  <h3 className="font-semibold text-gray-800">Reset Password</h3>
+                </div>
+                {resetSent ? (
+                  <div className="text-center py-3">
+                    <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                      <ShieldCheck className="w-6 h-6 text-green-600" />
+                    </div>
+                    <p className="text-sm text-gray-700 font-medium">Reset email sent!</p>
+                    <p className="text-xs text-gray-500 mt-1">Check your inbox at <strong>{forgotEmail}</strong></p>
+                    <button
+                      onClick={() => { setShowForgotPassword(false); setResetSent(false); setForgotEmail(''); }}
+                      className="mt-3 text-sm text-[#9867C5] hover:underline"
+                    >
+                      Back to Sign In
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={handleForgotPassword} className="space-y-3">
+                    <p className="text-xs text-gray-600">Enter your email address and we'll send you a link to reset your password.</p>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                      <input
+                        type="email"
+                        value={forgotEmail}
+                        onChange={(e) => setForgotEmail(e.target.value)}
+                        className="w-full pl-9 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#9867C5] outline-none text-sm"
+                        placeholder="your@email.com"
+                        required
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setShowForgotPassword(false); setForgotEmail(''); }}
+                        className="flex-1 py-2 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={isSendingReset}
+                        className="flex-1 py-2 text-sm bg-[#9867C5] hover:bg-[#9867C5]/90 text-white rounded-xl transition-colors disabled:opacity-70 flex items-center justify-center gap-1"
+                      >
+                        {isSendingReset ? (
+                          <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                          'Send Reset Link'
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <div className="flex bg-gray-100 p-1 rounded-xl mb-8">
             <button 
@@ -452,6 +569,18 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
                 </>
               )}
             </button>
+
+            {/* Forgot Password Link */}
+            {isLogin && (
+              <button
+                type="button"
+                onClick={() => { setShowForgotPassword(!showForgotPassword); setResetSent(false); }}
+                className="w-full text-center text-sm text-[#9867C5] hover:text-[#9867C5]/80 transition-colors flex items-center justify-center gap-1.5 mt-1"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                Forgot your password?
+              </button>
+            )}
           </form>
         </div>
         

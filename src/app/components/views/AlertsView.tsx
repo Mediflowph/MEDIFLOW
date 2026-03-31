@@ -1,14 +1,33 @@
+import { useState, useEffect } from 'react';
 import { supabase } from '@/app/utils/supabase';
 import { authManager } from '@/app/utils/authManager';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { isLowStock, getStockStatus, calculateReorderPoint } from '@/app/utils/reorderPoint';
+import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
+import { InventoryBatch } from '@/app/types/inventory';
+import { 
+  RefreshCw, 
+  XCircle, 
+  AlertTriangle, 
+  Calendar, 
+  TrendingDown, 
+  Building, 
+  Package, 
+  Pill, 
+  AlertCircle, 
+  FileSpreadsheet, 
+  PackagePlus,
+  Phone,
+  User
+} from 'lucide-react';
 
 interface AlertsViewProps {
   inventory: InventoryBatch[];
   userToken?: string;
   userRole?: string;
+  branchName?: string;
 }
 
 interface BranchData {
@@ -16,6 +35,8 @@ interface BranchData {
   userName: string;
   branchName: string;
   userRole: string;
+  userEmail?: string;
+  userPhone?: string;
   inventory: InventoryBatch[];
 }
 
@@ -30,7 +51,7 @@ interface BranchAlert {
   stockLevel?: number;
 }
 
-export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsViewProps) {
+export function AlertsView({ inventory, userToken, userRole = 'Staff', branchName }: AlertsViewProps) {
   const [branches, setBranches] = useState<BranchData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [branchAlerts, setBranchAlerts] = useState<BranchAlert[]>([]);
@@ -38,6 +59,9 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
   const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
   const [allBranches, setAllBranches] = useState<Array<{id: string, name: string}>>([]);
   const [currentToken, setCurrentToken] = useState<string | null>(userToken || null);
+  // Track live receiving events for the staff view
+  const [liveReceivingEvents, setLiveReceivingEvents] = useState<InventoryBatch[]>([]);
+  const [hasNewReceiving, setHasNewReceiving] = useState(false);
 
   const now = new Date();
 
@@ -101,28 +125,57 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
       );
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Server response error:', response.status, errorText);
+        
+        // Check if it's a 502 or HTML error response (deployment issue)
+        if (response.status === 502 || errorText.includes('<!DOCTYPE html>')) {
+          throw new Error("⚠️ Server deployment error (502). The Supabase Edge Function is not responding. Please contact administrator to redeploy.");
+        }
+        
         throw new Error("Failed to fetch branch data");
       }
 
       const data = await response.json();
       const branchData: BranchData[] = data.map(
-        (item: any) => ({
-          userId: item.userId,
-          userName: item.userName || "Unknown User",
-          branchName: item.branchName || "Unknown Branch",
-          userRole: item.userRole || "User",
-          inventory: item.value || [],
-        }),
+        (item: any) => {
+          const rawInventory = item.inventory || item.value || [];
+          // Transform SQL snake_case columns to camelCase InventoryBatch format
+          const transformedInventory: InventoryBatch[] = rawInventory.map((inv: any) => ({
+            id: inv.id,
+            drugName: inv.drug_name || inv.drugName || '',
+            program: inv.program || 'General',
+            dosage: inv.dosage || '',
+            unit: inv.unit || 'units',
+            batchNumber: inv.batch_number || inv.batchNumber || '',
+            beginningInventory: inv.beginning_inventory !== undefined ? inv.beginning_inventory : (inv.quantity || 0),
+            quantityReceived: inv.quantity_received || inv.quantityReceived || 0,
+            dateReceived: inv.date_received || inv.dateReceived || inv.created_at || '',
+            unitCost: inv.unit_cost || inv.unit_price || inv.unitCost || 0,
+            quantityDispensed: inv.quantity_dispensed || inv.quantityDispensed || 0,
+            expirationDate: inv.expiration_date || inv.expiry_date || inv.expirationDate || '',
+            remarks: inv.remarks || '',
+          }));
+          return {
+            userId: item.userId,
+            userName: item.userName || 'Unknown User',
+            branchName: item.branchName || 'Unknown Branch',
+            userRole: item.userRole || 'User',
+            userEmail: item.userEmail || '',
+            userPhone: item.userPhone || '',
+            inventory: transformedInventory,
+          };
+        },
       ).sort((a, b) => {
-        // Sort branches alphabetically by city/location name
         return a.branchName.localeCompare(b.branchName);
       });
 
       setBranches(branchData);
       generateBranchAlerts(branchData);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching branches:", error);
-      toast.error("Failed to load branch data");
+      const errorMessage = error?.message || "Failed to load branch data";
+      toast.error(errorMessage, { duration: 8000 });
     } finally {
       setIsLoading(false);
       setLastRefreshTime(new Date());
@@ -208,6 +261,43 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
 
     setBranchAlerts(alerts);
   };
+
+  // Supabase real-time subscription for staff view — inventory INSERT events
+  useEffect(() => {
+    if (userRole === 'Administrator' || userRole === 'Health Officer') return;
+
+    const channel = supabase
+      .channel('alerts-inventory-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'inventory' },
+        (payload) => {
+          console.log('📡 [AlertsView] New item received (real-time):', payload.new);
+          setHasNewReceiving(true);
+          setTimeout(() => setHasNewReceiving(false), 4000);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userRole]);
+
+  // Track inventory changes — update live receiving events list whenever inventory prop changes
+  useEffect(() => {
+    if (userRole === 'Administrator' || userRole === 'Health Officer') return;
+    const nowTs = new Date();
+    const recent = [...inventory]
+      .filter(item => {
+        if (!item.dateReceived) return false;
+        const daysSince = Math.floor((nowTs.getTime() - new Date(item.dateReceived).getTime()) / (1000 * 60 * 60 * 24));
+        return daysSince <= 30;
+      })
+      .sort((a, b) => new Date(b.dateReceived).getTime() - new Date(a.dateReceived).getTime())
+      .slice(0, 8);
+    setLiveReceivingEvents(recent);
+  }, [inventory, userRole]);
 
   useEffect(() => {
     if ((userRole === 'Administrator' || userRole === 'Health Officer') && currentToken) {
@@ -295,7 +385,7 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           <Card className="border-l-4 border-red-500 shadow-md">
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
@@ -357,93 +447,133 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
           </Card>
         </div>
 
-        {/* Branch Statistics - Grouped by Location */}
+        {/* Branch Statistics - Grid Layout */}
         <Card className="border-none shadow-md">
           <CardHeader className="border-b bg-gradient-to-r from-[#9867C5]/10 to-[#9867C5]/5">
             <CardTitle className="flex items-center gap-2 text-gray-800">
               <Building className="w-5 h-5 text-[#9867C5]" />
               Branch Alert Overview
+              <span className="ml-auto text-sm font-normal text-gray-500 bg-white/60 px-2.5 py-0.5 rounded-full border border-[#9867C5]/20">
+                {branches.length} branch account{branches.length !== 1 ? 's' : ''}
+              </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-6">
-            <div className="space-y-6">
-              {uniqueLocations.map(([locationName, locationBranches]) => (
-                <div key={locationName} className="space-y-3">
-                  <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                    <Building className="w-5 h-5 text-[#9867C5]" />
-                    {locationName}
-                    <span className="text-sm font-normal text-gray-600">
-                      ({locationBranches.length} account{locationBranches.length !== 1 ? 's' : ''})
-                    </span>
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {locationBranches.map((branch) => {
-                      const branchExpired = branchAlerts.filter(a => a.branchId === branch.userId && a.alertType === 'expired').length;
-                      const branchCritical = branchAlerts.filter(a => a.branchId === branch.userId && a.alertType === 'critical').length;
-                      const branchNearExpiry = branchAlerts.filter(a => a.branchId === branch.userId && a.alertType === 'nearExpiry').length;
-                      const branchLowStock = branchAlerts.filter(a => a.branchId === branch.userId && a.alertType === 'lowStock').length;
-                      const totalAlerts = branchExpired + branchCritical + branchNearExpiry + branchLowStock;
+            {branches.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <Building className="w-10 h-10 mx-auto mb-3 opacity-30" />
+                <p className="text-sm">No branch data available</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {branches.map((branch) => {
+                  const branchExpired = branchAlerts.filter(a => a.branchId === branch.userId && a.alertType === 'expired').length;
+                  const branchCritical = branchAlerts.filter(a => a.branchId === branch.userId && a.alertType === 'critical').length;
+                  const branchNearExpiry = branchAlerts.filter(a => a.branchId === branch.userId && a.alertType === 'nearExpiry').length;
+                  const branchLowStock = branchAlerts.filter(a => a.branchId === branch.userId && a.alertType === 'lowStock').length;
+                  const totalAlerts = branchExpired + branchCritical + branchNearExpiry + branchLowStock;
 
-                      return (
-                        <div
-                          key={branch.userId}
-                          className={`p-4 rounded-lg border-2 ${
-                            branchExpired > 0 || branchCritical > 0
-                              ? 'border-red-200 bg-red-50'
-                              : branchLowStock > 0 || branchNearExpiry > 0
-                              ? 'border-yellow-200 bg-yellow-50'
-                              : 'border-green-200 bg-green-50'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between mb-3">
-                            <div>
-                              <p className="font-semibold text-gray-800">{branch.userName}</p>
-                              <p className="text-xs text-gray-600">{branch.branchName}</p>
-                            </div>
-                            <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                              totalAlerts > 0 ? 'bg-red-600 text-white' : 'bg-green-600 text-white'
-                            }`}>
-                              {totalAlerts}
-                            </span>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            {branchExpired > 0 && (
-                              <div className="flex items-center gap-1 text-red-600">
-                                <XCircle className="w-3 h-3" />
-                                <span>{branchExpired} Expired</span>
-                              </div>
-                            )}
-                            {branchCritical > 0 && (
-                              <div className="flex items-center gap-1 text-orange-600">
-                                <AlertTriangle className="w-3 h-3" />
-                                <span>{branchCritical} Critical</span>
-                              </div>
-                            )}
-                            {branchNearExpiry > 0 && (
-                              <div className="flex items-center gap-1 text-yellow-600">
-                                <Calendar className="w-3 h-3" />
-                                <span>{branchNearExpiry} Near Exp</span>
-                              </div>
-                            )}
-                            {branchLowStock > 0 && (
-                              <div className="flex items-center gap-1 text-blue-600">
-                                <TrendingDown className="w-3 h-3" />
-                                <span>{branchLowStock} Low Stock</span>
-                              </div>
-                            )}
-                            {totalAlerts === 0 && (
-                              <div className="col-span-2 text-center text-green-600 font-medium">
-                                All Clear ✓
-                              </div>
-                            )}
-                          </div>
+                  const isHighAlert = branchExpired > 0 || branchCritical > 0;
+                  const isMediumAlert = !isHighAlert && (branchLowStock > 0 || branchNearExpiry > 0);
+                  const isAllClear = totalAlerts === 0;
+
+                  const borderColor = isHighAlert
+                    ? 'border-red-400'
+                    : isMediumAlert
+                    ? 'border-amber-400'
+                    : 'border-emerald-400';
+
+                  const headerBg = isHighAlert
+                    ? 'bg-red-50'
+                    : isMediumAlert
+                    ? 'bg-amber-50'
+                    : 'bg-emerald-50';
+
+                  const badgeBg = isHighAlert
+                    ? 'bg-red-600'
+                    : isMediumAlert
+                    ? 'bg-amber-500'
+                    : 'bg-emerald-500';
+
+                  return (
+                    <div
+                      key={branch.userId}
+                      className={`relative rounded-xl border-2 overflow-hidden shadow-sm hover:shadow-md transition-shadow ${borderColor}`}
+                    >
+                      {/* Alert count badge */}
+                      <span className={`absolute top-3 right-3 min-w-[22px] h-[22px] px-1.5 rounded-full flex items-center justify-center text-[11px] font-bold text-white shadow z-10 ${badgeBg}`}>
+                        {isAllClear ? '✓' : totalAlerts}
+                      </span>
+
+                      {/* Card Header — Branch Name */}
+                      <div className={`px-4 pt-4 pb-3 ${headerBg} border-b ${borderColor}`}>
+                        <div className="flex items-start gap-2 pr-8">
+                          <Building className="w-4 h-4 text-[#9867C5] mt-0.5 shrink-0" />
+                          <p className="text-sm font-bold text-gray-800 leading-tight">{branch.branchName}</p>
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
+                      </div>
+
+                      {/* Card Body */}
+                      <div className="px-4 py-3 bg-white space-y-2.5">
+                        {/* Contact info */}
+                        <div className="space-y-1.5">
+                          <p className="text-[9px] text-gray-400 uppercase tracking-widest font-semibold">Branch Contact</p>
+                          <div className="flex items-center gap-1.5">
+                            <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                            <p className="text-xs font-semibold text-gray-700 truncate">{branch.userName}</p>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <Phone className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                            <p className="text-xs text-gray-500 truncate">{branch.userPhone || 'No contact on file'}</p>
+                          </div>
+                          {branch.userEmail && (
+                            <div className="flex items-center gap-1.5">
+                              <AlertCircle className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+                              <p className="text-[11px] text-gray-400 truncate">{branch.userEmail}</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Inventory count */}
+                        <div className="flex items-center gap-1.5 pb-1">
+                          <Package className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+                          <p className="text-[11px] text-gray-400">{branch.inventory.length} item{branch.inventory.length !== 1 ? 's' : ''} in inventory</p>
+                        </div>
+
+                        {/* Alert pills */}
+                        <div className="flex flex-wrap gap-1 pt-2 border-t border-gray-100">
+                          {branchExpired > 0 && (
+                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-semibold">
+                              <XCircle className="w-2.5 h-2.5" />{branchExpired} Expired
+                            </span>
+                          )}
+                          {branchCritical > 0 && (
+                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[10px] font-semibold">
+                              <AlertTriangle className="w-2.5 h-2.5" />{branchCritical} Critical
+                            </span>
+                          )}
+                          {branchNearExpiry > 0 && (
+                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 text-[10px] font-semibold">
+                              <Calendar className="w-2.5 h-2.5" />{branchNearExpiry} Near Exp.
+                            </span>
+                          )}
+                          {branchLowStock > 0 && (
+                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-semibold">
+                              <TrendingDown className="w-2.5 h-2.5" />{branchLowStock} Low Stock
+                            </span>
+                          )}
+                          {isAllClear && (
+                            <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-semibold">
+                              ✓ All Clear
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -457,7 +587,7 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {allBranches.map((branch) => {
                   // Check if this branch has users with inventory
                   const hasInventory = branches.some(b => b.branchName === branch.name);
@@ -905,16 +1035,12 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
     }
   };
 
-  // Recent activity (mock)
-  const recentReceiving = inventory
-    .filter(item => {
-      const daysSinceReceived = Math.floor((now.getTime() - new Date(item.dateReceived).getTime()) / (1000 * 60 * 60 * 24));
-      return daysSinceReceived <= 7;
-    })
-    .slice(0, 5);
+  // Recent receiving — driven by live state updated from inventory prop changes
+  const recentReceiving = liveReceivingEvents;
 
   const recentDispensing = inventory
     .filter(item => item.quantityDispensed > 0)
+    .sort((a, b) => (b.quantityDispensed || 0) - (a.quantityDispensed || 0))
     .slice(0, 5);
 
   return (
@@ -922,7 +1048,10 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
       <div className="flex justify-between items-start">
         <div>
           <h2 className="text-2xl font-bold text-gray-800 mb-2">Alerts & Notifications</h2>
-          <p className="text-gray-600">Real-time monitoring of expiry dates, stock levels, and activity</p>
+          <p className="text-gray-600">
+            Real-time monitoring of expiry dates, stock levels, and activity
+            {branchName ? ` — ${branchName}` : ''}
+          </p>
         </div>
         <button
           onClick={exportSummaryReport}
@@ -1148,30 +1277,65 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff' }: AlertsV
 
       {/* Recent Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recent Receiving — LIVE */}
         <Card className="border-none shadow-md">
           <CardHeader className="border-b bg-gradient-to-r from-[#9867C5]/10 to-[#9867C5]/5">
-            <CardTitle className="flex items-center gap-2 text-gray-800">
-              <PackagePlus className="w-5 h-5 text-[#9867C5]" />
-              Recent Receiving (Last 7 Days)
+            <CardTitle className="flex items-center justify-between text-gray-800">
+              <span className="flex items-center gap-2">
+                <PackagePlus className="w-5 h-5 text-[#9867C5]" />
+                Recent Receiving (Last 30 Days)
+              </span>
+              <span className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full transition-all duration-300 ${
+                hasNewReceiving
+                  ? 'bg-green-500 text-white'
+                  : 'bg-green-100 text-green-700'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${hasNewReceiving ? 'bg-white animate-ping' : 'bg-green-500 animate-pulse'}`} />
+                LIVE
+              </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-6">
             {recentReceiving.length === 0 ? (
-              <p className="text-center text-gray-500 py-4">No recent receiving activity</p>
+              <div className="text-center py-6 text-gray-400">
+                <PackagePlus className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">No receiving activity in the last 30 days</p>
+                <p className="text-xs mt-1">New items appear here instantly when received</p>
+              </div>
             ) : (
-              <div className="space-y-3">
-                {recentReceiving.map(item => (
-                  <div key={item.id} className="flex justify-between items-center p-3 bg-[#9867C5]/10 rounded-lg">
-                    <div>
-                      <p className="font-semibold text-gray-800">{item.drugName}</p>
-                      <p className="text-xs text-gray-600">{item.dosage}</p>
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {recentReceiving.map((item, idx) => {
+                  const daysSince = Math.floor((now.getTime() - new Date(item.dateReceived).getTime()) / (1000 * 60 * 60 * 24));
+                  const isToday = daysSince === 0;
+                  return (
+                    <div
+                      key={`${item.id}-${idx}`}
+                      className={`flex justify-between items-center p-3 rounded-lg border transition-all ${
+                        isToday
+                          ? 'bg-[#9867C5]/10 border-[#9867C5]/30 shadow-sm'
+                          : 'bg-gray-50 border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2 min-w-0">
+                        <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${isToday ? 'bg-[#9867C5] animate-pulse' : 'bg-gray-300'}`} />
+                        <div className="min-w-0">
+                          <p className="font-semibold text-gray-800 text-sm truncate">{item.drugName}</p>
+                          {item.dosage && <p className="text-xs text-gray-500">{item.dosage}</p>}
+                          {item.batchNumber && <p className="text-xs text-gray-400">Batch: {item.batchNumber}</p>}
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0 ml-2">
+                        <p className={`text-sm font-bold ${item.quantityReceived > 0 ? 'text-[#9867C5]' : 'text-gray-400'}`}>
+                          {item.quantityReceived > 0 ? `+${item.quantityReceived.toLocaleString()}` : '—'}
+                        </p>
+                        <p className="text-xs text-gray-400">{isToday ? 'Today' : `${daysSince}d ago`}</p>
+                        {isToday && (
+                          <span className="text-[10px] bg-[#9867C5] text-white px-1.5 py-0.5 rounded-full">NEW</span>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm font-medium text-[#9867C5]">+{item.quantityReceived}</p>
-                      <p className="text-xs text-gray-500">{new Date(item.dateReceived).toLocaleDateString()}</p>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>

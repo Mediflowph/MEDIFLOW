@@ -125,6 +125,10 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
       }
 
       return true;
+    }).sort((a, b) => {
+      const programCmp = a.program.localeCompare(b.program);
+      if (programCmp !== 0) return programCmp;
+      return a.drugName.localeCompare(b.drugName);
     });
   }, [inventory, filters]);
 
@@ -188,13 +192,33 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
 
       const data = await response.json();
       const branchData: BranchData[] = data.map(
-        (item: any) => ({
-          userId: item.userId,
-          userName: item.userName || "Unknown User",
-          branchName: item.branchName || "Unknown Branch",
-          userRole: item.userRole || "User",
-          inventory: item.value || [],
-        }),
+        (item: any) => {
+          const rawInventory = item.inventory || item.value || [];
+          // Transform SQL snake_case columns to camelCase InventoryBatch format
+          const transformedInventory: InventoryBatch[] = rawInventory.map((inv: any) => ({
+            id: inv.id,
+            drugName: inv.drug_name || inv.drugName || '',
+            program: inv.program || 'General',
+            dosage: inv.dosage || '',
+            unit: inv.unit || 'units',
+            batchNumber: inv.batch_number || inv.batchNumber || '',
+            beginningInventory: inv.quantity !== undefined ? inv.quantity : (inv.beginning_inventory || inv.beginningInventory || 0),
+            quantityReceived: inv.quantity_received || inv.quantityReceived || 0,
+            dateReceived: inv.date_received || inv.dateReceived || inv.created_at || '',
+            unitCost: inv.unit_cost || inv.unit_price || inv.unitCost || 0,
+            quantityDispensed: inv.quantity_dispensed || inv.quantityDispensed || 0,
+            expirationDate: inv.expiration_date || inv.expiry_date || inv.expirationDate || '',
+            remarks: inv.remarks || '',
+            branchId: inv.branch_id || inv.branchId || inv.user_id || item.userId || '',
+          }));
+          return {
+            userId: item.userId,
+            userName: item.userName || "Unknown User",
+            branchName: item.branchName || "Unknown Branch",
+            userRole: item.userRole || "User",
+            inventory: transformedInventory,
+          };
+        },
       ).sort((a, b) => {
         // Sort branches alphabetically by city/location name
         return a.branchName.localeCompare(b.branchName);
@@ -218,46 +242,36 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
   const handleGenerateBranchReport = async (branchId: string, branchName: string) => {
     try {
       setGeneratingReportFor(branchId);
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/generate-report/${branchId}`,
-        {
-          method: "POST",
-          headers: {
-            "X-User-Token": userToken!,
-            Authorization: `Bearer ${publicAnonKey}`,
-          },
-        },
-      );
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to generate report");
+      // Find the branch from already-fetched data — NO server call needed
+      const branch = branches.find(b => b.userId === branchId);
+      if (!branch) {
+        toast.error('Branch not found', { description: 'Could not locate branch data.' });
+        return;
       }
 
-      const reportData = await response.json();
-
-      const excelBlob = await generateExcelReportWithBranchInfo(
-        reportData.inventory,
-        reportData.userMetadata.branch,
-        reportData.userMetadata.name,
-        branchId
+      const excelBlob = generateExcelReportWithBranchInfo(
+        branch.inventory,
+        branch.branchName,
+        branch.userName,
+        branchId,
       );
 
       const url = URL.createObjectURL(excelBlob);
-      const link = document.createElement("a");
+      const link = document.createElement('a');
       link.href = url;
-      link.download = `Physical_Inventory_${reportData.userMetadata.branch.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.xlsx`;
+      link.download = `Physical_Inventory_${branch.branchName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      toast.success("Report Generated", {
+      toast.success('Report Generated', {
         description: `Report for ${branchName} has been downloaded.`,
       });
     } catch (error) {
-      console.error("Error generating report:", error);
-      toast.error("Report Generation Failed");
+      console.error('Error generating report:', error);
+      toast.error('Report Generation Failed');
     } finally {
       setGeneratingReportFor(null);
     }
@@ -382,7 +396,7 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
                   <p className="text-gray-600 text-sm font-medium">Report Date</p>
                   <p className="text-lg font-bold text-gray-800 mt-1">{new Date().toLocaleDateString()}</p>
                 </div>
-                <Calendar className="w-10 h-10 text-[#9867C5]/40" />
+                <Calendar className="w-10 h-10 text-[#9867C5]" />
               </div>
             </CardContent>
           </Card>
@@ -501,8 +515,9 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
         <CardContent className="pt-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
-              <p className="text-xs text-[#f57f17] font-bold uppercase">Health Services Office</p>
-              <p className="font-semibold text-gray-800">City Government of Baguio</p>
+              <p className="text-xs text-[#f57f17] font-bold uppercase">Drug Inventory System</p>
+              <p className="font-semibold text-gray-800">{branchName ? ` ${branchName}` : ' Drug Inventory System'}
+          </p>
             </div>
             <div>
               <p className="text-xs text-gray-500 uppercase font-bold">Reporting Quarter</p>

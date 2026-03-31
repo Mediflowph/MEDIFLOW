@@ -12,7 +12,7 @@ import {
   XCircle,
   Calendar
 } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { InventoryBatch } from '@/app/types/inventory';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
@@ -23,6 +23,7 @@ interface HomeViewProps {
   inventory: InventoryBatch[];
   userToken?: string;
   userRole?: string;
+  branchName?: string;
 }
 
 interface BranchDrugData {
@@ -43,7 +44,7 @@ interface DrugUtilization {
   branches: BranchDrugData[];
 }
 
-export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
+export function HomeView({ inventory, userToken, userRole, branchName }: HomeViewProps) {
   const [topUtilizedDrugs, setTopUtilizedDrugs] = useState<DrugUtilization[]>([]);
   const [isLoadingUtilization, setIsLoadingUtilization] = useState(false);
   const [selectedDrug, setSelectedDrug] = useState<string | null>(null);
@@ -275,21 +276,43 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
       },
     ];
 
-    // Monthly dispensing trends (mock data for chart)
-    const monthlyData = [
-      { month: 'Jan', dispensed: 1200 },
-      { month: 'Feb', dispensed: 1450 },
-      { month: 'Mar', dispensed: 1350 },
-      { month: 'Apr', dispensed: 1600 },
-      { month: 'May', dispensed: 1580 },
-      { month: 'Jun', dispensed: 1720 },
-    ];
+    // Monthly dispensing trends — computed from actual inventory data (last 6 months)
+    const monthlyData = useMemo(() => {
+      const result: { month: string; dispensed: number; received: number }[] = [];
+      const now = new Date();
+
+      for (let i = 5; i >= 0; i--) {
+        const target = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const y = target.getFullYear();
+        const m = target.getMonth();
+        const label = target.toLocaleString('default', { month: 'short' });
+
+        const items = inventory.filter(item => {
+          if (!item.dateReceived) return false;
+          const d = new Date(item.dateReceived);
+          return d.getFullYear() === y && d.getMonth() === m;
+        });
+
+        result.push({
+          month: label,
+          dispensed: items.reduce((s, item) => s + (item.quantityDispensed || 0), 0),
+          received: items.reduce((s, item) => s + (item.quantityReceived || 0), 0),
+        });
+      }
+      return result;
+    }, [inventory]);
+
+    const maxMonthlyValue = Math.max(...monthlyData.map(d => Math.max(d.dispensed, d.received)), 1);
+    const hasMonthlyData = monthlyData.some(d => d.dispensed > 0 || d.received > 0);
 
     return (
       <div className="p-8 space-y-6">
         <div>
           <h2 className="text-2xl font-bold text-gray-800 mb-2">Dashboard Overview</h2>
-          <p className="text-gray-600">City Health Services Office - Drug Inventory System</p>
+          <p className="text-gray-600">
+            Drug Inventory System
+            {branchName ? ` — ${branchName}` : ' - Drug Inventory System'}
+          </p>
         </div>
 
         {/* Stats Grid */}
@@ -361,29 +384,73 @@ export function HomeView({ inventory, userToken, userRole }: HomeViewProps) {
           {/* Monthly Dispensing Trends */}
           <Card className="border-none shadow-md">
             <CardHeader className="border-b bg-gradient-to-r from-blue-50 to-indigo-50">
-              <CardTitle className="flex items-center gap-2 text-gray-800">
-                <TrendingUp className="w-5 h-5 text-blue-600" />
-                Monthly Dispensing Trends
-              </CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-gray-800">
+                  <TrendingUp className="w-5 h-5 text-blue-600" />
+                  Monthly Dispensing Trends
+                </CardTitle>
+                <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                  Live
+                </span>
+              </div>
             </CardHeader>
             <CardContent className="pt-6">
-              <div className="space-y-3">
-                {monthlyData.map((data) => (
-                  <div key={data.month} className="flex items-center gap-3">
-                    <span className="text-sm font-medium text-gray-600 w-12">{data.month}</span>
-                    <div className="flex-1">
-                      <div className="w-full bg-gray-200 rounded-full h-6">
-                        <div 
-                          className="bg-gradient-to-r from-blue-500 to-indigo-600 h-6 rounded-full flex items-center justify-end pr-2 transition-all"
-                          style={{ width: `${(data.dispensed / 2000) * 100}%` }}
-                        >
-                          <span className="text-xs text-white font-medium">{data.dispensed}</span>
+              {!hasMonthlyData ? (
+                <div className="text-center py-6 text-gray-400">
+                  <BarChart3 className="w-10 h-10 mx-auto mb-2 opacity-40" />
+                  <p className="text-sm">No dispensing data for the last 6 months</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {monthlyData.map((data) => (
+                    <div key={data.month} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-gray-500">
+                        <span className="font-medium text-gray-700 w-10">{data.month}</span>
+                        <span>{data.dispensed > 0 ? `${data.dispensed.toLocaleString()} dispensed` : 'no dispensing'}</span>
+                      </div>
+                      <div className="flex gap-1 items-center">
+                        {/* Received bar */}
+                        <div className="flex-1">
+                          <div className="w-full bg-gray-100 rounded-full h-4">
+                            <div
+                              className="bg-gradient-to-r from-blue-400 to-indigo-500 h-4 rounded-full transition-all flex items-center justify-end pr-2"
+                              style={{ width: `${(data.received / maxMonthlyValue) * 100}%` }}
+                            >
+                              {data.received > 0 && (
+                                <span className="text-[10px] text-white font-medium">{data.received}</span>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </div>
+                      {data.dispensed > 0 && (
+                        <div className="flex-1 ml-10">
+                          <div className="w-full bg-gray-100 rounded-full h-3">
+                            <div
+                              className="bg-gradient-to-r from-purple-500 to-[#9867C5] h-3 rounded-full transition-all flex items-center justify-end pr-1"
+                              style={{ width: `${(data.dispensed / maxMonthlyValue) * 100}%` }}
+                            >
+                              <span className="text-[9px] text-white font-medium">{data.dispensed}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
+                  ))}
+                  {/* Legend */}
+                  <div className="flex items-center gap-4 pt-2 border-t text-xs text-gray-500">
+                    <span className="flex items-center gap-1">
+                      <span className="w-3 h-2 rounded-full bg-gradient-to-r from-blue-400 to-indigo-500 inline-block" />
+                      Received
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-3 h-2 rounded-full bg-gradient-to-r from-purple-500 to-[#9867C5] inline-block" />
+                      Dispensed
+                    </span>
                   </div>
-                ))}
-              </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

@@ -36,6 +36,7 @@ import { supabase } from "@/app/utils/supabase";
 
 interface BranchData {
   userId: string;
+  branchId: string;  // always the real branch UUID
   userName: string;
   branchName: string;
   userRole: string;
@@ -162,6 +163,7 @@ export function BranchInventoryManagementView({
 
           return {
             userId: item.userId,
+            branchId: item.branchId || item.userId,  // use branchId if available, fallback to userId
             userName: item.userName || "Unknown User",
             branchName: item.branchName || "Unknown Branch",
             userRole: item.userRole || "User",
@@ -217,7 +219,7 @@ export function BranchInventoryManagementView({
       );
 
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/update-branch/${userId}`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/update-branch/${branch.branchId}`,
         {
           method: "PUT",
           headers: {
@@ -272,7 +274,7 @@ export function BranchInventoryManagementView({
       const updatedInventory = [...branch.inventory, newBatch];
 
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/update-branch/${userId}`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/update-branch/${branch.branchId}`,
         {
           method: "PUT",
           headers: {
@@ -307,43 +309,26 @@ export function BranchInventoryManagementView({
   const handleGenerateReport = async (branchId: string, branchName: string) => {
     try {
       setGeneratingReportForBranch(branchId);
-      
-      const token = await getFreshToken();
-      if (!token) {
-        toast.error("Session Expired");
+
+      // Find the branch from already-fetched data — no server call or user lookup needed
+      const branch = branches.find(b => b.userId === branchId);
+      if (!branch) {
+        toast.error("Branch not found", { description: "Please refresh and try again." });
         setGeneratingReportForBranch(null);
         return;
       }
 
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/generate-report/${branchId}`,
-        {
-          method: "POST",
-          headers: {
-            "X-User-Token": token,
-            Authorization: `Bearer ${publicAnonKey}`,
-          },
-        },
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to generate report");
-      }
-
-      const reportData = await response.json();
-
-      const excelBlob = await generateExcelReportWithBranchInfo(
-        reportData.inventory,
-        reportData.userMetadata.branch,
-        reportData.userMetadata.name,
-        branchId
+      const excelBlob = generateExcelReportWithBranchInfo(
+        branch.inventory,
+        branch.branchName,
+        branch.userName,
+        branchId,
       );
 
       const url = URL.createObjectURL(excelBlob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `Physical_Inventory_${reportData.userMetadata.branch.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.xlsx`;
+      link.download = `Physical_Inventory_${branch.branchName.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.xlsx`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

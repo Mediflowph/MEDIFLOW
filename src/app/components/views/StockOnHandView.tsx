@@ -65,6 +65,7 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
     
     try {
       setIsLoading(true);
+      console.log('🔄 [StockOnHandView] Fetching all branches...');
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/all-branches`,
         {
@@ -80,22 +81,53 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
       }
 
       const data = await response.json();
+      console.log('📊 [StockOnHandView] Received data from server:', data);
+      console.log('📦 [StockOnHandView] Number of branches:', data.length);
+      
       const branchData: BranchData[] = data.map(
-        (item: any) => ({
-          userId: item.userId,
-          userName: item.userName || "Unknown User",
-          branchName: item.branchName || "Unknown Branch",
-          userRole: item.userRole || "User",
-          inventory: item.value || [],
-        }),
+        (item: any) => {
+          const rawInventory = item.inventory || item.value || [];
+          // Transform SQL snake_case columns to camelCase InventoryBatch format
+          const transformedInventory: InventoryBatch[] = rawInventory.map((inv: any) => ({
+            id: inv.id,
+            drugName: inv.drug_name || inv.drugName || '',
+            program: inv.program || 'General',
+            dosage: inv.dosage || '',
+            unit: inv.unit || 'units',
+            batchNumber: inv.batch_number || inv.batchNumber || '',
+            beginningInventory: inv.quantity !== undefined ? inv.quantity : (inv.beginning_inventory || inv.beginningInventory || 0),
+            quantityReceived: inv.quantity_received || inv.quantityReceived || 0,
+            dateReceived: inv.date_received || inv.dateReceived || inv.created_at || '',
+            unitCost: inv.unit_cost || inv.unit_price || inv.unitCost || 0,
+            quantityDispensed: inv.quantity_dispensed || inv.quantityDispensed || 0,
+            expirationDate: inv.expiration_date || inv.expiry_date || inv.expirationDate || '',
+            remarks: inv.remarks || '',
+            branchId: inv.branch_id || inv.branchId || inv.user_id || item.userId || '',
+          }));
+          console.log('🔍 [StockOnHandView] Processing branch:', {
+            userName: item.userName,
+            branchName: item.branchName,
+            rawCount: rawInventory.length,
+            transformedCount: transformedInventory.length
+          });
+          return {
+            userId: item.userId,
+            userName: item.userName || "Unknown User",
+            branchName: item.branchName || "Unknown Branch",
+            userRole: item.userRole || "User",
+            inventory: transformedInventory,
+          };
+        },
       ).sort((a, b) => {
         // Sort branches alphabetically by city/location name
         return a.branchName.localeCompare(b.branchName);
       });
 
+      console.log('✅ [StockOnHandView] Processed branch data:', branchData);
+      console.log('📈 [StockOnHandView] Total inventory items:', branchData.reduce((sum, b) => sum + b.inventory.length, 0));
       setBranches(branchData);
     } catch (error) {
-      console.error("Error fetching branches:", error);
+      console.error("❌ [StockOnHandView] Error fetching branches:", error);
       toast.error("Failed to load branch data");
     } finally {
       setIsLoading(false);
@@ -130,13 +162,33 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
 
       const data = await response.json();
       const branchData: BranchData[] = data.map(
-        (item: any) => ({
-          userId: item.userId,
-          userName: item.userName || "Unknown User",
-          branchName: item.branchName || "Unknown Branch",
-          userRole: item.userRole || "User",
-          inventory: item.value || [],
-        }),
+        (item: any) => {
+          const rawInventory = item.inventory || item.value || [];
+          // Transform SQL snake_case columns to camelCase InventoryBatch format
+          const transformedInventory: InventoryBatch[] = rawInventory.map((inv: any) => ({
+            id: inv.id,
+            drugName: inv.drug_name || inv.drugName || '',
+            program: inv.program || 'General',
+            dosage: inv.dosage || '',
+            unit: inv.unit || 'units',
+            batchNumber: inv.batch_number || inv.batchNumber || '',
+            beginningInventory: inv.quantity !== undefined ? inv.quantity : (inv.beginning_inventory || inv.beginningInventory || 0),
+            quantityReceived: inv.quantity_received || inv.quantityReceived || 0,
+            dateReceived: inv.date_received || inv.dateReceived || inv.created_at || '',
+            unitCost: inv.unit_cost || inv.unit_price || inv.unitCost || 0,
+            quantityDispensed: inv.quantity_dispensed || inv.quantityDispensed || 0,
+            expirationDate: inv.expiration_date || inv.expiry_date || inv.expirationDate || '',
+            remarks: inv.remarks || '',
+            branchId: inv.branch_id || inv.branchId || inv.user_id || item.userId || '',
+          }));
+          return {
+            userId: item.userId,
+            userName: item.userName || "Unknown User",
+            branchName: item.branchName || "Unknown Branch",
+            userRole: item.userRole || "User",
+            inventory: transformedInventory,
+          };
+        },
       ).sort((a, b) => {
         // Sort branches alphabetically by city/location name
         return a.branchName.localeCompare(b.branchName);

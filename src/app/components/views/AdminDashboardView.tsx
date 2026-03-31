@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { authManager } from '@/app/utils/authManager';
 import type { Branch, AuditLog } from '@/app/utils/kvStore';
-import { Shield, RefreshCw, UserCheck, UserX, Clock, List, Building, Plus, Database, Users, Search, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
+import { Shield, RefreshCw, UserCheck, UserX, Clock, List, Building, Plus, Database, Users, Search, AlertTriangle, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
 import { toast } from 'sonner';
@@ -1037,7 +1037,7 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {branches.map(branch => (
-                    <div key={branch.id} className="p-4 bg-gray-50 rounded-xl border border-gray-100 flex items-center justify-between group">
+                    <div key={branch.id} className="p-4 bg-gray-50 rounded-xl border border-gray-100 flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm">
                           <Building className="w-5 h-5 text-[#9867C5]" />
@@ -1047,20 +1047,20 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
                           <p className="text-[10px] text-gray-400 font-mono">ID: {branch.id}</p>
                         </div>
                       </div>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex gap-1">
                         <button 
                           onClick={() => initializeInventory(branch.id, branch.name)}
-                          className="p-2 text-[#9867C5] hover:bg-[#9867C5]/10 rounded-lg"
+                          className="p-2 text-[#9867C5] hover:bg-[#9867C5]/10 rounded-lg transition-colors"
                           title="Initialize Inventory"
                         >
                           <Database className="w-4 h-4" />
                         </button>
                         <button 
                           onClick={() => deleteBranch(branch.id, branch.name)}
-                          className="p-2 text-red-400 hover:bg-red-50 rounded-lg"
+                          className="p-2 text-red-400 hover:bg-red-50 rounded-lg transition-colors"
                           title="Delete Branch"
                         >
-                          <UserX className="w-4 h-4" />
+                          <Trash2 className="w-4 h-4" />
                         </button>
                       </div>
                     </div>

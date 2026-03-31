@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { ClipboardCheck, AlertCircle, CheckCircle } from 'lucide-react';
+import { ClipboardCheck, AlertCircle, CheckCircle, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
 import { InventoryBatch } from '@/app/types/inventory';
 
 interface InventoryCheckViewProps {
   inventory: InventoryBatch[];
+  onClearInventory?: () => void;
 }
 
 interface PhysicalCount {
@@ -14,7 +15,7 @@ interface PhysicalCount {
   remarks: string;
 }
 
-export function InventoryCheckView({ inventory }: InventoryCheckViewProps) {
+export function InventoryCheckView({ inventory, onClearInventory }: InventoryCheckViewProps) {
   const [physicalCounts, setPhysicalCounts] = useState<Record<string, PhysicalCount>>({});
   const [showDiscrepanciesOnly, setShowDiscrepanciesOnly] = useState(false);
 
@@ -57,6 +58,13 @@ export function InventoryCheckView({ inventory }: InventoryCheckViewProps) {
         return variance !== 0;
       })
     : inventory;
+
+  // Sort by Program → Drug Name (same grouping as DOH report)
+  const sortedInventory = [...filteredInventory].sort((a, b) => {
+    const programCmp = a.program.localeCompare(b.program);
+    if (programCmp !== 0) return programCmp;
+    return a.drugName.localeCompare(b.drugName);
+  });
 
   const totalDiscrepancies = inventory.filter(batch => getVariance(batch) !== 0).length;
 
@@ -115,7 +123,7 @@ export function InventoryCheckView({ inventory }: InventoryCheckViewProps) {
       </div>
 
       {/* Filter Toggle */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center justify-between gap-4">
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
@@ -125,6 +133,20 @@ export function InventoryCheckView({ inventory }: InventoryCheckViewProps) {
           />
           <span className="text-sm text-gray-700">Show discrepancies only</span>
         </label>
+
+        {onClearInventory && (
+          <button
+            onClick={() => {
+              if (window.confirm('⚠️ DEV TOOL\n\nThis will permanently delete ALL inventory data for this branch from the database.\n\nAre you sure?')) {
+                onClearInventory();
+              }
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 border border-red-300 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+            [DEV] Clear All Inventory
+          </button>
+        )}
       </div>
 
       {/* Inventory Check Table */}
@@ -141,6 +163,7 @@ export function InventoryCheckView({ inventory }: InventoryCheckViewProps) {
               <thead className="bg-gray-100">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs text-gray-600">Drug Name</th>
+                  <th className="px-4 py-3 text-left text-xs text-gray-600">Program</th>
                   <th className="px-4 py-3 text-left text-xs text-gray-600">Batch Number</th>
                   <th className="px-4 py-3 text-left text-xs text-gray-600">System Stock</th>
                   <th className="px-4 py-3 text-left text-xs text-gray-600">Physical Count</th>
@@ -149,7 +172,7 @@ export function InventoryCheckView({ inventory }: InventoryCheckViewProps) {
                 </tr>
               </thead>
               <tbody>
-                {filteredInventory.map((batch) => {
+                {sortedInventory.map((batch) => {
                   const systemStock = getSystemStock(batch);
                   const physicalCount = physicalCounts[batch.id]?.physicalCount ?? systemStock;
                   const variance = getVariance(batch);
@@ -168,6 +191,7 @@ export function InventoryCheckView({ inventory }: InventoryCheckViewProps) {
                           <p className="text-xs text-gray-500">{batch.dosage}</p>
                         </div>
                       </td>
+                      <td className="px-4 py-3 text-sm text-gray-600">{batch.program}</td>
                       <td className="px-4 py-3 text-sm text-gray-800">{batch.batchNumber}</td>
                       <td className="px-4 py-3 text-sm">
                         <span className="font-semibold text-gray-800">{systemStock}</span>
