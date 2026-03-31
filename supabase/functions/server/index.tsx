@@ -311,6 +311,7 @@ app.get("/make-server-c88a69d7/inventory/all-branches", async (c) => {
       
       result.push({
         userId: branchUser?.id || branch.id,
+        branchId: branch.id,  // always the real branch UUID
         userName: branch.contact_person || authUserInfo?.name || 'Branch Contact',
         branchName: branch.name,
         userRole: branchUser?.role || 'Branch',
@@ -433,7 +434,6 @@ app.post("/make-server-c88a69d7/inventory", async (c) => {
         batch_number: item.batchNumber || item.batch_number || null,
         supplier: item.supplier || null,
         unit_price: item.unitCost || item.unit_price || item.unitPrice || null,
-        program: item.program || null,
         unit: item.unit || null,
         remarks: item.remarks || null
       }));
@@ -468,34 +468,54 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
       return c.json({ error: 'Unauthorized: Admin or Health Officer access required' }, 403);
     }
 
-    const targetUserId = c.req.param('userId');
+    const targetId = c.req.param('userId');
     const { inventory } = await c.req.json();
     
     if (!Array.isArray(inventory)) {
       return c.json({ error: 'Invalid inventory format' }, 400);
     }
 
-    console.log(`💾 Admin/HO updating inventory for user: ${targetUserId}`);
+    console.log(`💾 Admin/HO updating inventory for id: ${targetId}`);
     console.log(`📦 Inventory items: ${inventory.length}`);
     
     const supabase = getSupabaseClient();
-    
-    // Get user's branch from users table
-    const { data: userData, error: userError } = await supabase
+
+    // Resolve branch_id: first try as a user id in the users table
+    let branchId: string | null = null;
+
+    const { data: userData } = await supabase
       .from('users')
       .select('branch_id')
-      .eq('id', targetUserId)
+      .eq('id', targetId)
       .single();
-    
-    if (userError || !userData?.branch_id) {
-      return c.json({ error: 'User branch not found' }, 404);
+
+    if (userData?.branch_id) {
+      branchId = userData.branch_id;
+      console.log(`✅ Resolved branch_id via users table: ${branchId}`);
+    } else {
+      // Fallback: targetId might already BE the branch_id (returned when no user is linked)
+      const { data: branchData } = await supabase
+        .from('branches')
+        .select('id')
+        .eq('id', targetId)
+        .single();
+
+      if (branchData) {
+        branchId = targetId;
+        console.log(`✅ Using targetId directly as branch_id: ${branchId}`);
+      }
+    }
+
+    if (!branchId) {
+      console.error(`❌ Could not resolve branch for id: ${targetId}`);
+      return c.json({ error: 'Branch not found' }, 404);
     }
     
     // Delete existing inventory for this branch
     const { error: deleteError } = await supabase
       .from('inventory')
       .delete()
-      .eq('branch_id', userData.branch_id);
+      .eq('branch_id', branchId);
     
     if (deleteError) {
       console.error('❌ Error deleting old inventory:', deleteError);
@@ -505,22 +525,24 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
     // Insert new inventory items
     if (inventory.length > 0) {
       const inventoryRecords = inventory.map((item: any) => ({
-        branch_id: userData.branch_id,
+        branch_id: branchId,
         drug_name: item.drugName || item.drug_name || 'Unknown',
         generic_name: item.genericName || item.generic_name || null,
         dosage: item.dosage || null,
-        // Handle both InventoryBatch format (beginningInventory) and SQL format (quantity)
         quantity: item.quantity !== undefined ? item.quantity 
           : (item.beginningInventory !== undefined ? (item.beginningInventory + (item.quantityReceived || 0) - (item.quantityDispensed || 0)) : 0),
-        // Handle both expirationDate and expiry_date formats
         expiry_date: item.expirationDate || item.expiry_date || item.expiryDate || null,
         batch_number: item.batchNumber || item.batch_number || null,
         supplier: item.supplier || null,
-        // Handle both unitCost and unit_price formats
         unit_price: item.unitCost || item.unit_price || item.unitPrice || null,
-        program: item.program || null,
         unit: item.unit || null,
-        remarks: item.remarks || null
+        remarks: item.remarks || null,
+        beginning_inventory: item.beginningInventory || item.beginning_inventory || 0,
+        quantity_received: item.quantityReceived || item.quantity_received || 0,
+        date_received: item.dateReceived || item.date_received || null,
+        quantity_dispensed: item.quantityDispensed || item.quantity_dispensed || 0,
+        expiration_date: item.expirationDate || item.expiration_date || item.expiry_date || null,
+        unit_cost: item.unitCost || item.unit_cost || item.unit_price || null,
       }));
       
       const { error: insertError } = await supabase
@@ -533,7 +555,7 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
       }
     }
     
-    console.log(`✅ Successfully updated inventory for user ${targetUserId}`);
+    console.log(`✅ Successfully updated inventory for branch ${branchId}`);
     
     return c.json({ success: true, itemCount: inventory.length });
   } catch (err) {
@@ -584,7 +606,7 @@ app.post("/make-server-c88a69d7/update-profile", async (c) => {
       return c.json({ error: authResult.error }, 401);
     }
 
-    const { name, profilePicture, userId, branch, branchContact } = await c.req.json();
+    const { name, profilePicture, userId, branch, branchContact, branchLocation } = await c.req.json();
     
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -602,9 +624,34 @@ app.post("/make-server-c88a69d7/update-profile", async (c) => {
       }
     }
 
-    // Get current user metadata
-    const { data: targetUser } = await supabase.auth.admin.getUserById(targetUserId);
-    const currentMetadata = targetUser?.user?.user_metadata || {};
+    // Try to get the auth user — userId might be a branch UUID when no user is linked to the branch
+    const { data: targetUser, error: getUserError } = await supabase.auth.admin.getUserById(targetUserId);
+
+    if (getUserError || !targetUser?.user) {
+      // targetUserId is a branch UUID, not an auth user. Update the branches table directly.
+      console.log(`⚠️ No auth user for id ${targetUserId} — treating as branch UUID, updating branches table`);
+      const branchUpdates: any = {};
+      if (name !== undefined) branchUpdates.contact_person = name;
+      if (branchContact !== undefined) branchUpdates.contact_phone = branchContact;
+      if (branchLocation !== undefined) branchUpdates.location = branchLocation;
+
+      if (Object.keys(branchUpdates).length > 0) {
+        const { error: branchUpdateError } = await supabase
+          .from('branches')
+          .update(branchUpdates)
+          .eq('id', targetUserId);
+
+        if (branchUpdateError) {
+          console.error('❌ Error updating branch table:', branchUpdateError);
+          return c.json({ error: branchUpdateError.message }, 400);
+        }
+      }
+
+      console.log(`✅ Updated branch record for: ${targetUserId}`);
+      return c.json({ success: true });
+    }
+
+    const currentMetadata = targetUser.user.user_metadata || {};
     
     const { data, error } = await supabase.auth.admin.updateUserById(
       targetUserId,
@@ -614,13 +661,31 @@ app.post("/make-server-c88a69d7/update-profile", async (c) => {
           name: name !== undefined ? name : currentMetadata.name,
           profilePicture: profilePicture !== undefined ? profilePicture : currentMetadata.profilePicture,
           branch: branch !== undefined ? branch : currentMetadata.branch,
-          branchContact: branchContact !== undefined ? branchContact : currentMetadata.branchContact
+          branchContact: branchContact !== undefined ? branchContact : currentMetadata.branchContact,
+          branchLocation: branchLocation !== undefined ? branchLocation : currentMetadata.branchLocation,
         }
       }
     );
 
     if (error) {
       return c.json({ error: error.message }, 400);
+    }
+
+    // Also sync contact info to the branches table so all-branches returns updated data
+    const { data: userRow } = await supabase
+      .from('users')
+      .select('branch_id')
+      .eq('id', targetUserId)
+      .single();
+
+    if (userRow?.branch_id) {
+      const branchUpdates: any = {};
+      if (name !== undefined) branchUpdates.contact_person = name;
+      if (branchContact !== undefined) branchUpdates.contact_phone = branchContact;
+      if (branchLocation !== undefined) branchUpdates.location = branchLocation;
+      if (Object.keys(branchUpdates).length > 0) {
+        await supabase.from('branches').update(branchUpdates).eq('id', userRow.branch_id);
+      }
     }
 
     console.log(`✅ Updated profile for user: ${targetUserId}`);
@@ -1340,6 +1405,46 @@ app.post("/make-server-c88a69d7/branches", async (c) => {
   } catch (err) {
     console.error("❌ Create branch error:", err);
     return c.json({ error: "Failed to create branch" }, 500);
+  }
+});
+
+app.put("/make-server-c88a69d7/branches/:branchId/contact", async (c) => {
+  try {
+    const branchId = c.req.param('branchId');
+    const { contactPhone, contactPerson, contactEmail } = await c.req.json();
+    const supabase = getSupabaseClient();
+
+    const updateFields: Record<string, string> = {};
+    if (contactPhone !== undefined) updateFields.contact_phone = contactPhone;
+    if (contactPerson !== undefined) updateFields.contact_person = contactPerson;
+    if (contactEmail !== undefined) updateFields.contact_email = contactEmail;
+
+    const { data, error } = await supabase
+      .from('branches')
+      .update(updateFields)
+      .eq('id', branchId)
+      .select('id, name, contact_phone, contact_person, contact_email')
+      .single();
+
+    if (error) {
+      console.error('❌ Error updating branch contact:', error);
+      return c.json({ error: 'Failed to update branch contact info' }, 500);
+    }
+
+    console.log(`✅ Updated contact for branch: ${data.name}`);
+    return c.json({
+      success: true,
+      branch: {
+        id: data.id,
+        name: data.name,
+        contactPhone: data.contact_phone || '',
+        contactPerson: data.contact_person || '',
+        contactEmail: data.contact_email || '',
+      }
+    });
+  } catch (err) {
+    console.error("❌ Update branch contact error:", err);
+    return c.json({ error: "Failed to update branch contact info" }, 500);
   }
 });
 
@@ -2285,5 +2390,200 @@ app.post("/make-server-c88a69d7/migrate-to-sql-original", async (c) => {
   }
 });
 */
+
+// ─── Forgot Password via Resend (custom token — no Supabase OTP) ──────────────
+app.post("/make-server-c88a69d7/forgot-password", async (c) => {
+  try {
+    const { email } = await c.req.json();
+
+    if (!email) {
+      return c.json({ error: "Email is required" }, 400);
+    }
+
+    const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
+    if (!RESEND_API_KEY) {
+      console.error("❌ RESEND_API_KEY is not set");
+      return c.json({ error: "Email service is not configured" }, 500);
+    }
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    );
+
+    // Verify user exists (silently succeed if not — prevents email enumeration)
+    const { data: listData } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+    const user = listData?.users?.find(
+      (u: any) => u.email?.toLowerCase() === email.toLowerCase()
+    );
+    if (!user) {
+      console.log("⚠️ Forgot-password: user not found, silently succeeding:", email);
+      return c.json({ success: true });
+    }
+
+    // Generate a cryptographically secure 32-byte (64 hex char) token
+    const tokenBytes = new Uint8Array(32);
+    crypto.getRandomValues(tokenBytes);
+    const token = Array.from(tokenBytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    // Store token in KV table with 1-hour expiry
+    const kvKey = `reset_token:${token}`;
+    const expiresAt = Date.now() + 60 * 60 * 1000; // 1 hour from now
+    const { error: kvError } = await supabase.from("kv_store_c88a69d7").upsert({
+      key: kvKey,
+      value: { email: email.toLowerCase(), expires_at: expiresAt },
+    });
+    if (kvError) {
+      console.error("❌ Failed to store reset token:", kvError);
+      return c.json({ error: "Failed to generate reset token", details: kvError.message }, 500);
+    }
+
+    // Build reset link — goes directly to our app, no Supabase OTP/verify endpoint
+    const resetLink = "https://mediflowph.com/?reset_token=" + token;
+    console.log("🔗 Custom reset link generated for:", email);
+
+    // Build HTML email
+    const htmlParts: string[] = [];
+    htmlParts.push("<!DOCTYPE html><html><head>");
+    htmlParts.push('<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />');
+    htmlParts.push("</head><body style=\"margin:0;padding:0;background:#f3f4f6;font-family:'Segoe UI',Arial,sans-serif;\">");
+    htmlParts.push('<table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:40px 0;"><tr><td align="center">');
+    htmlParts.push('<table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">');
+    htmlParts.push('<tr><td style="background:#9867C5;padding:32px 40px;text-align:center;">');
+    htmlParts.push('<div style="font-size:28px;font-weight:800;color:#ffffff;">MediFlow</div>');
+    htmlParts.push('<div style="font-size:12px;color:rgba(255,255,255,0.75);margin-top:4px;text-transform:uppercase;letter-spacing:1px;">Drug Inventory Management System</div>');
+    htmlParts.push("</td></tr>");
+    htmlParts.push('<tr><td style="padding:40px;">');
+    htmlParts.push('<h2 style="margin:0 0 8px;font-size:22px;color:#1f2937;">Reset your password</h2>');
+    htmlParts.push('<p style="margin:0 0 24px;font-size:14px;color:#6b7280;line-height:1.6;">');
+    htmlParts.push("We received a request to reset the password for your MediFlow account associated with ");
+    htmlParts.push('<strong style="color:#374151;">');
+    htmlParts.push(email);
+    htmlParts.push("</strong>.<br /><br />Click the button below to set a new password. This link expires in <strong>1 hour</strong>.</p>");
+    htmlParts.push('<div style="text-align:center;margin-bottom:28px;">');
+    htmlParts.push('<a href="');
+    htmlParts.push(resetLink);
+    htmlParts.push('" style="display:inline-block;background:#9867C5;color:#ffffff;text-decoration:none;padding:14px 36px;border-radius:12px;font-weight:700;font-size:15px;">Reset Password</a>');
+    htmlParts.push("</div>");
+    htmlParts.push('<p style="margin:0 0 6px;font-size:12px;color:#9ca3af;text-align:center;">Or copy and paste this link:</p>');
+    htmlParts.push('<p style="margin:0;font-size:11px;color:#9867C5;text-align:center;word-break:break-all;">');
+    htmlParts.push(resetLink);
+    htmlParts.push("</p></td></tr>");
+    htmlParts.push('<tr><td style="background:#fef9c3;padding:16px 40px;border-top:1px solid #fde68a;">');
+    htmlParts.push('<p style="margin:0;font-size:11px;color:#92400e;text-align:center;"><strong>OFFICIAL DOH INVENTORY PORTAL</strong> &middot; If you did not request this, ignore this email.</p>');
+    htmlParts.push("</td></tr></table></td></tr></table></body></html>");
+    const htmlBody = htmlParts.join("");
+
+    const emailResponse = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer " + RESEND_API_KEY,
+      },
+      body: JSON.stringify({
+        from: "MediFlow <noreply@mediflowph.com>",
+        to: [email],
+        subject: "MediFlow - Reset Your Password",
+        html: htmlBody,
+      }),
+    });
+
+    const resendBody = await emailResponse.text();
+
+    if (!emailResponse.ok) {
+      console.error("❌ Resend API error (HTTP " + emailResponse.status + "):", resendBody);
+      return c.json({
+        error: "Failed to send reset email via Resend",
+        details: resendBody,
+        httpStatus: emailResponse.status,
+      }, 500);
+    }
+
+    console.log("✅ Password reset email sent via Resend to:", email);
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error("❌ Forgot password unexpected error:", err);
+    return c.json({ error: "Unexpected error in forgot-password", details: err.message }, 500);
+  }
+});
+
+// ─── Reset Password (validate custom KV token, update via admin API) ───────────
+app.post("/make-server-c88a69d7/reset-password", async (c) => {
+  try {
+    const { token, password } = await c.req.json();
+
+    if (!token || !password) {
+      return c.json({ error: "Token and password are required" }, 400);
+    }
+    if (password.length < 8) {
+      return c.json({ error: "Password must be at least 8 characters" }, 400);
+    }
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    );
+
+    // Look up token in KV
+    const kvKey = `reset_token:${token}`;
+    const { data: kvRow, error: kvError } = await supabase
+      .from("kv_store_c88a69d7")
+      .select("value")
+      .eq("key", kvKey)
+      .maybeSingle();
+
+    if (kvError) {
+      console.error("❌ KV lookup error:", kvError);
+      return c.json({ error: "Failed to verify token", details: kvError.message }, 500);
+    }
+
+    if (!kvRow?.value) {
+      console.warn("⚠️ Reset token not found or already used");
+      return c.json({ error: "Invalid or already used reset link. Please request a new one." }, 400);
+    }
+
+    const { email, expires_at } = kvRow.value as { email: string; expires_at: number };
+
+    // Check expiry
+    if (Date.now() > expires_at) {
+      await supabase.from("kv_store_c88a69d7").delete().eq("key", kvKey);
+      console.warn("⚠️ Reset token expired for:", email);
+      return c.json({ error: "This reset link has expired. Please request a new one." }, 400);
+    }
+
+    // Find the user by email
+    const { data: listData, error: listError } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+    if (listError) {
+      console.error("❌ Error listing users:", listError);
+      return c.json({ error: "Failed to locate user account", details: listError.message }, 500);
+    }
+
+    const user = listData?.users?.find(
+      (u: any) => u.email?.toLowerCase() === email.toLowerCase()
+    );
+    if (!user) {
+      console.error("❌ User not found for email:", email);
+      return c.json({ error: "User account not found" }, 404);
+    }
+
+    // Update password via admin API — no Supabase session required
+    const { error: updateError } = await supabase.auth.admin.updateUserById(user.id, { password });
+    if (updateError) {
+      console.error("❌ Password update error:", updateError);
+      return c.json({ error: "Failed to update password", details: updateError.message }, 500);
+    }
+
+    // Delete token so it cannot be reused
+    await supabase.from("kv_store_c88a69d7").delete().eq("key", kvKey);
+
+    console.log("✅ Password successfully reset for:", email);
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error("❌ Reset password unexpected error:", err);
+    return c.json({ error: "Unexpected error in reset-password", details: err.message }, 500);
+  }
+});
 
 Deno.serve(app.fetch);

@@ -260,50 +260,51 @@ app.get("/make-server-c88a69d7/inventory/all-branches", async (c) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     );
     
-    const { data, error } = await supabase
-      .from('kv_store_c88a69d7')
-      .select('key, value')
-      .like('key', 'mediflow_inventory_%');
+    console.log('📊 Fetching all branch inventories from SQL inventory table...');
     
-    if (error) {
-      console.error('❌ Database error:', error);
-      return c.json({ error: 'Failed to fetch inventories' }, 500);
-    }
-    
+    // Fetch all users with their branch information
     const { data: usersData } = await supabase.auth.admin.listUsers();
-    const userMap = new Map();
-    usersData?.users.forEach(user => {
-      userMap.set(user.id, {
-        name: user.user_metadata?.name || user.email,
-        branch: user.user_metadata?.branch || 'Unknown Branch',
-        role: user.user_metadata?.role || 'User',
-        email: user.email,
-        phone: user.user_metadata?.branchContact || ''
-      });
-    });
     
-    const enrichedData = (data || []).map(item => {
-      const userId = item.key.replace('mediflow_inventory_', '');
-      const userInfo = userMap.get(userId);
-      return {
-        ...item,
-        userId,
-        userName: userInfo?.name || 'Unknown User',
-        branchName: userInfo?.branch || 'Unknown Branch',
-        userRole: userInfo?.role || 'User',
-        userEmail: userInfo?.email || '',
-        userPhone: userInfo?.phone || ''
-      };
-    });
-    
-    // Filter out Administrator and Health Officer accounts - they don't have branches
-    const pharmacyStaffOnly = enrichedData.filter(item => 
-      item.userRole === 'Pharmacy Staff'
+    // Filter to only Pharmacy Staff users
+    const pharmacyStaffUsers = (usersData?.users || []).filter(user => 
+      user.user_metadata?.role === 'Pharmacy Staff'
     );
     
-    console.log(`✅ Retrieved ${enrichedData.length} total inventories, ${pharmacyStaffOnly.length} pharmacy staff branches`);
+    console.log(`👥 Found ${pharmacyStaffUsers.length} pharmacy staff users`);
     
-    return c.json(pharmacyStaffOnly);
+    // Fetch inventory for each pharmacy staff user from the SQL inventory table
+    const branchInventories = await Promise.all(
+      pharmacyStaffUsers.map(async (user) => {
+        const { data: inventoryData, error } = await supabase
+          .from('inventory')
+          .select('*')
+          .eq('user_id', user.id);
+        
+        if (error) {
+          console.error(`❌ Error fetching inventory for user ${user.id}:`, error);
+          return null;
+        }
+        
+        return {
+          userId: user.id,
+          userName: user.user_metadata?.name || user.email,
+          branchName: user.user_metadata?.branch || 'Unknown Branch',
+          userRole: user.user_metadata?.role || 'User',
+          userEmail: user.email || '',
+          userPhone: user.user_metadata?.branchContact || '',
+          value: inventoryData || [], // Use 'value' key for backward compatibility with frontend
+          inventory: inventoryData || [] // Also provide 'inventory' key
+        };
+      })
+    );
+    
+    // Filter out null results (users with errors)
+    const validBranchInventories = branchInventories.filter(item => item !== null);
+    
+    console.log(`✅ Retrieved inventories for ${validBranchInventories.length} pharmacy staff branches`);
+    console.log(`📦 Total inventory items across all branches: ${validBranchInventories.reduce((sum, b) => sum + (b?.value?.length || 0), 0)}`);
+    
+    return c.json(validBranchInventories);
   } catch (err) {
     console.error("❌ Fetch all inventories error:", err);
     return c.json({ error: "Failed to fetch branch inventories" }, 500);
@@ -329,14 +330,56 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
       return c.json({ error: 'Invalid inventory format' }, 400);
     }
 
-    const key = `mediflow_inventory_${targetUserId}`;
-    
-    console.log(`💾 Admin/HO updating inventory for user: ${targetUserId}`);
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    );
+
+    console.log(`💾 Admin/HO updating SQL inventory for user: ${targetUserId}`);
     console.log(`📦 Inventory items: ${inventory.length}`);
-    
-    await kv.set(key, inventory);
-    console.log(`✅ Successfully updated inventory at: ${key}`);
-    
+
+    // Delete all existing inventory rows for this user
+    const { error: deleteError } = await supabase
+      .from('inventory')
+      .delete()
+      .eq('user_id', targetUserId);
+
+    if (deleteError) {
+      console.error(`❌ Error deleting old inventory for user ${targetUserId}:`, deleteError);
+      return c.json({ error: 'Failed to clear existing inventory' }, 500);
+    }
+
+    // Insert updated inventory rows (if any)
+    if (inventory.length > 0) {
+      // Map camelCase frontend fields → snake_case SQL columns
+      const rows = inventory.map((item: any) => ({
+        id: item.id || crypto.randomUUID(),
+        user_id: targetUserId,
+        drug_name: item.drugName || item.drug_name || '',
+        program: item.program || 'General',
+        dosage: item.dosage || '',
+        unit: item.unit || 'units',
+        batch_number: item.batchNumber || item.batch_number || '',
+        quantity: item.beginningInventory !== undefined ? item.beginningInventory : (item.quantity || 0),
+        quantity_received: item.quantityReceived || item.quantity_received || 0,
+        date_received: item.dateReceived || item.date_received || new Date().toISOString().split('T')[0],
+        unit_cost: item.unitCost || item.unit_cost || 0,
+        quantity_dispensed: item.quantityDispensed || item.quantity_dispensed || 0,
+        expiration_date: item.expirationDate || item.expiration_date || '',
+        remarks: item.remarks || '',
+      }));
+
+      const { error: insertError } = await supabase
+        .from('inventory')
+        .insert(rows);
+
+      if (insertError) {
+        console.error(`❌ Error inserting updated inventory for user ${targetUserId}:`, insertError);
+        return c.json({ error: 'Failed to save updated inventory' }, 500);
+      }
+    }
+
+    console.log(`✅ Successfully updated SQL inventory for user: ${targetUserId} (${inventory.length} items)`);
     return c.json({ success: true, itemCount: inventory.length });
   } catch (err) {
     console.error("❌ Update branch inventory error:", err);
@@ -588,33 +631,82 @@ app.post("/make-server-c88a69d7/inventory/generate-report/:userId", async (c) =>
     const targetUserId = c.req.param('userId');
     console.log(`📊 Generating report for user: ${targetUserId}`);
 
+    // Accept branch metadata from the request body sent by the frontend
+    // This avoids unreliable user lookups via admin API (pagination limits, etc.)
+    let bodyData: any = {};
+    try {
+      bodyData = await c.req.json();
+    } catch (_) {
+      // Body is optional
+    }
+
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     );
 
-    const { data: userData, error: userError } = await supabase.auth.admin.getUserById(targetUserId);
-    
-    if (userError || !userData) {
-      return c.json({ error: 'User not found' }, 404);
+    // Fetch inventory from SQL table — this is the source of truth
+    const { data: inventoryData, error: inventoryError } = await supabase
+      .from('inventory')
+      .select('*')
+      .eq('user_id', targetUserId);
+
+    if (inventoryError) {
+      console.error(`❌ Error fetching inventory for user ${targetUserId}:`, inventoryError);
+      return c.json({ error: 'Failed to fetch inventory data' }, 500);
     }
 
-    const inventoryKey = `mediflow_inventory_${targetUserId}`;
-    const inventory = await kv.get(inventoryKey);
+    // Transform SQL snake_case to camelCase for frontend compatibility
+    const inventory = (inventoryData || []).map((item: any) => ({
+      id: item.id,
+      drugName: item.drug_name || item.drugName || '',
+      program: item.program || 'General',
+      dosage: item.dosage || '',
+      unit: item.unit || 'units',
+      batchNumber: item.batch_number || item.batchNumber || '',
+      beginningInventory: item.quantity !== undefined ? item.quantity : (item.beginning_inventory || 0),
+      quantityReceived: item.quantity_received || 0,
+      dateReceived: item.date_received || item.created_at || '',
+      unitCost: item.unit_cost || item.unit_price || 0,
+      quantityDispensed: item.quantity_dispensed || 0,
+      expirationDate: item.expiration_date || item.expiry_date || '',
+      remarks: item.remarks || '',
+      branchId: item.branch_id || item.user_id || targetUserId,
+    }));
 
-    if (!inventory) {
-      return c.json({ error: 'Inventory not found for this user' }, 404);
+    // Build user metadata — prefer what the frontend sent, fall back to listUsers
+    let userMeta = {
+      name: bodyData.userName || 'Unknown',
+      branch: bodyData.branchName || 'Unknown Branch',
+      role: 'Pharmacy Staff',
+      email: '',
+    };
+
+    // Only do the user lookup if the frontend didn't supply metadata
+    if (!bodyData.userName || !bodyData.branchName) {
+      try {
+        // Use perPage: 1000 to avoid pagination missing the user
+        const { data: usersData } = await supabase.auth.admin.listUsers({ perPage: 1000, page: 1 });
+        const targetUser = (usersData?.users || []).find((u: any) => u.id === targetUserId);
+        if (targetUser) {
+          userMeta = {
+            name: targetUser.user_metadata?.name || targetUser.email || 'Unknown',
+            branch: targetUser.user_metadata?.branch || bodyData.branchName || 'Unknown Branch',
+            role: targetUser.user_metadata?.role || 'Pharmacy Staff',
+            email: targetUser.email || '',
+          };
+        }
+      } catch (lookupErr) {
+        console.warn('⚠️ Could not look up user metadata, using frontend-supplied values:', lookupErr);
+      }
     }
+
+    console.log(`✅ Generated report with ${inventory.length} items for branch: ${userMeta.branch}`);
 
     return c.json({
       success: true,
-      inventory: inventory,
-      userMetadata: {
-        name: userData.user.user_metadata?.name || userData.user.email,
-        branch: userData.user.user_metadata?.branch || 'Unknown Branch',
-        role: userData.user.user_metadata?.role || 'User',
-        email: userData.user.email
-      }
+      inventory,
+      userMetadata: userMeta,
     });
   } catch (err) {
     console.error("❌ Generate report error:", err);
