@@ -78,8 +78,44 @@ app.post("/make-server-c88a69d7/init-admin-accounts", async (c) => {
       if (error) {
         results.push({ email: account.email, status: 'error', error: error.message });
       } else {
+        // Also upsert into users table so server endpoints can find admin/HO accounts
+        const { error: upsertError } = await supabase
+          .from('users')
+          .upsert({
+            id: data.user.id,
+            branch_id: null,
+            name: account.name,
+            role: account.role,
+            approved: true,
+          }, { onConflict: 'id' });
+
+        if (upsertError) {
+          console.error(`⚠️ Could not upsert user row for ${account.email}:`, upsertError);
+        } else {
+          console.log(`✅ User row upserted for ${account.email}`);
+        }
+
         results.push({ email: account.email, status: 'created', userId: data.user.id });
       }
+    }
+
+    // Idempotent repair: ensure ALL existing admin/HO auth users have a users-table row
+    try {
+      const { data: allAuthUsers } = await supabase.auth.admin.listUsers();
+      for (const u of allAuthUsers?.users ?? []) {
+        const role = u.user_metadata?.role;
+        if (role !== 'Administrator' && role !== 'Health Officer') continue;
+        await supabase.from('users').upsert({
+          id: u.id,
+          branch_id: null,
+          name: u.user_metadata?.name || u.email?.split('@')[0] || 'Admin',
+          role,
+          approved: true,
+        }, { onConflict: 'id' });
+      }
+      console.log('✅ Admin/HO users-table repair complete');
+    } catch (repairErr) {
+      console.error('⚠️ Admin user-row repair error:', repairErr);
     }
 
     return c.json({ 
@@ -159,6 +195,49 @@ app.post("/make-server-c88a69d7/signup", async (c) => {
   }
 });
 
+// Called once on every admin/HO login to ensure their row exists in users table
+app.post("/make-server-c88a69d7/ensure-user-row", async (c) => {
+  try {
+    const userToken = c.req.header('X-User-Token');
+    if (!userToken) return c.json({ error: 'No token' }, 401);
+
+    const anonClient = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+    );
+    const { data: { user }, error: authError } = await anonClient.auth.getUser(userToken);
+    if (authError || !user) return c.json({ error: 'Invalid token' }, 401);
+
+    const role = user.user_metadata?.role;
+    // Only repair Admin and Health Officer rows (staff rows are created at signup)
+    if (role !== 'Administrator' && role !== 'Health Officer') {
+      return c.json({ success: true, action: 'skipped' });
+    }
+
+    const supabase = getSupabaseClient();
+    const { error: upsertError } = await supabase
+      .from('users')
+      .upsert({
+        id: user.id,
+        branch_id: null,
+        name: user.user_metadata?.name || user.email?.split('@')[0] || role,
+        role,
+        approved: true,
+      }, { onConflict: 'id' });
+
+    if (upsertError) {
+      console.error('❌ ensure-user-row upsert failed:', upsertError);
+      return c.json({ error: upsertError.message }, 500);
+    }
+
+    console.log(`✅ ensure-user-row: row confirmed for ${user.email} (${role})`);
+    return c.json({ success: true, action: 'upserted' });
+  } catch (err) {
+    console.error('❌ ensure-user-row error:', err);
+    return c.json({ error: 'Internal error' }, 500);
+  }
+});
+
 const checkAuth = async (c: any) => {
   const userToken = c.req.header('X-User-Token');
   console.log('🔐 User token received:', userToken ? `${userToken.substring(0, 27)}...` : 'NO TOKEN');
@@ -200,6 +279,13 @@ app.get("/make-server-c88a69d7/inventory", async (c) => {
 
     const supabase = getSupabaseClient();
     
+    // Admin / Health Officer accounts have no branch — return empty immediately
+    const userRole = authResult.user.user_metadata?.role;
+    if (userRole === 'Administrator' || userRole === 'Health Officer') {
+      console.log('ℹ️ Admin/HO account — no branch-specific inventory to return');
+      return c.json([]);
+    }
+
     // Get user's branch assignment from users table
     const { data: userData, error: userError } = await supabase
       .from('users')
@@ -208,8 +294,9 @@ app.get("/make-server-c88a69d7/inventory", async (c) => {
       .single();
     
     if (userError) {
-      console.error('❌ Error fetching user data:', userError);
-      return c.json({ error: 'User data not found' }, 404);
+      // Row might not exist yet (e.g. newly created staff); treat as no branch assigned
+      console.warn('⚠️ users-table lookup failed (treating as no branch):', userError.message);
+      return c.json([]);
     }
     
     if (!userData?.branch_id) {
@@ -389,6 +476,14 @@ app.post("/make-server-c88a69d7/inventory", async (c) => {
       return c.json({ error: 'Invalid inventory format' }, 400);
     }
 
+    // Admin / Health Officer accounts manage inventory per branch via the
+    // PUT /inventory/update-branch/:userId endpoint — skip direct sync for them
+    const callerRole = authResult.user.user_metadata?.role;
+    if (callerRole === 'Administrator' || callerRole === 'Health Officer') {
+      console.log('ℹ️ Admin/HO account — skipping direct inventory sync (no personal branch)');
+      return c.json({ success: true, itemCount: 0, skipped: true });
+    }
+
     const supabase = getSupabaseClient();
     
     // Get user's branch
@@ -399,12 +494,14 @@ app.post("/make-server-c88a69d7/inventory", async (c) => {
       .single();
     
     if (userError) {
-      console.error('❌ Error fetching user data:', userError);
-      return c.json({ error: 'Failed to fetch user data' }, 500);
+      // Row missing — treat as no branch rather than crashing
+      console.warn('⚠️ users-table lookup failed for sync (treating as no branch):', userError.message);
+      return c.json({ success: true, itemCount: 0, skipped: true });
     }
     
     if (!userData?.branch_id) {
-      return c.json({ error: 'User has no branch assigned' }, 400);
+      console.log('⚠️ User has no branch assigned — skipping sync');
+      return c.json({ success: true, itemCount: 0, skipped: true });
     }
 
     console.log(`💾 Saving inventory for user: ${authResult.user.id}, branch: ${userData.branch_id}`);
@@ -434,8 +531,6 @@ app.post("/make-server-c88a69d7/inventory", async (c) => {
         batch_number: item.batchNumber || item.batch_number || null,
         supplier: item.supplier || null,
         unit_price: item.unitCost || item.unit_price || item.unitPrice || null,
-        unit: item.unit || null,
-        remarks: item.remarks || null
       }));
       
       const { error: insertError } = await supabase
@@ -535,8 +630,6 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
         batch_number: item.batchNumber || item.batch_number || null,
         supplier: item.supplier || null,
         unit_price: item.unitCost || item.unit_price || item.unitPrice || null,
-        unit: item.unit || null,
-        remarks: item.remarks || null,
         beginning_inventory: item.beginningInventory || item.beginning_inventory || 0,
         quantity_received: item.quantityReceived || item.quantity_received || 0,
         date_received: item.dateReceived || item.date_received || null,
@@ -1615,55 +1708,43 @@ app.post("/make-server-c88a69d7/populate-sample-medicines", async (c) => {
       return c.json({ error: 'No branches found in the system' }, 404);
     }
 
-    // Comprehensive sample medicine data
+    // DOH Philippine Health Program sample medicine data
     const sampleMedicines = [
-      // Pain Relief & Fever
-      { drug_name: 'Paracetamol', generic_name: 'Acetaminophen', dosage: '500mg', quantity: 1000, expiry_date: '2027-12-31', batch_number: 'PAR-2024-001', supplier: 'PharmaCorp Ltd', unit_price: 1.50 },
-      { drug_name: 'Ibuprofen', generic_name: 'Ibuprofen', dosage: '400mg', quantity: 850, expiry_date: '2027-08-15', batch_number: 'IBU-2024-002', supplier: 'MediSupply Inc', unit_price: 2.25 },
-      { drug_name: 'Aspirin', generic_name: 'Acetylsalicylic Acid', dosage: '100mg', quantity: 600, expiry_date: '2027-03-20', batch_number: 'ASP-2024-003', supplier: 'HealthGen', unit_price: 1.80 },
-      
-      // Antibiotics
-      { drug_name: 'Amoxicillin', generic_name: 'Amoxicillin', dosage: '250mg', quantity: 750, expiry_date: '2027-06-30', batch_number: 'AMX-2024-004', supplier: 'PharmaCorp Ltd', unit_price: 3.25 },
-      { drug_name: 'Azithromycin', generic_name: 'Azithromycin', dosage: '500mg', quantity: 400, expiry_date: '2027-09-15', batch_number: 'AZI-2024-005', supplier: 'BioMed Solutions', unit_price: 5.50 },
-      { drug_name: 'Ciprofloxacin', generic_name: 'Ciprofloxacin', dosage: '500mg', quantity: 300, expiry_date: '2027-11-10', batch_number: 'CIP-2024-006', supplier: 'MediSupply Inc', unit_price: 4.75 },
-      { drug_name: 'Cephalexin', generic_name: 'Cephalexin', dosage: '500mg', quantity: 450, expiry_date: '2027-07-25', batch_number: 'CEP-2024-007', supplier: 'HealthGen', unit_price: 4.00 },
-      
-      // Cardiovascular
-      { drug_name: 'Amlodipine', generic_name: 'Amlodipine', dosage: '5mg', quantity: 900, expiry_date: '2028-01-30', batch_number: 'AML-2024-008', supplier: 'CardioPharm', unit_price: 3.50 },
-      { drug_name: 'Atorvastatin', generic_name: 'Atorvastatin', dosage: '20mg', quantity: 650, expiry_date: '2027-10-18', batch_number: 'ATO-2024-009', supplier: 'CardioPharm', unit_price: 6.25 },
-      { drug_name: 'Metoprolol', generic_name: 'Metoprolol', dosage: '50mg', quantity: 520, expiry_date: '2027-12-05', batch_number: 'MET-2024-010', supplier: 'PharmaCorp Ltd', unit_price: 4.50 },
-      { drug_name: 'Losartan', generic_name: 'Losartan Potassium', dosage: '50mg', quantity: 680, expiry_date: '2027-08-28', batch_number: 'LOS-2024-011', supplier: 'BioMed Solutions', unit_price: 5.00 },
-      
-      // Diabetes Management
-      { drug_name: 'Metformin', generic_name: 'Metformin HCl', dosage: '500mg', quantity: 1200, expiry_date: '2028-02-14', batch_number: 'MET-2024-012', supplier: 'DiabetaCare', unit_price: 2.80 },
-      { drug_name: 'Glimepiride', generic_name: 'Glimepiride', dosage: '2mg', quantity: 550, expiry_date: '2027-11-22', batch_number: 'GLI-2024-013', supplier: 'DiabetaCare', unit_price: 4.20 },
-      { drug_name: 'Insulin Glargine', generic_name: 'Insulin Glargine', dosage: '100 IU/mL', quantity: 200, expiry_date: '2026-12-31', batch_number: 'INS-2024-014', supplier: 'EndoPharm', unit_price: 45.00 },
-      
-      // Respiratory
-      { drug_name: 'Salbutamol', generic_name: 'Albuterol', dosage: '100mcg', quantity: 380, expiry_date: '2027-09-08', batch_number: 'SAL-2024-015', supplier: 'RespiraTech', unit_price: 8.50 },
-      { drug_name: 'Cetirizine', generic_name: 'Cetirizine', dosage: '10mg', quantity: 720, expiry_date: '2027-10-12', batch_number: 'CET-2024-016', supplier: 'MediSupply Inc', unit_price: 2.00 },
-      { drug_name: 'Montelukast', generic_name: 'Montelukast', dosage: '10mg', quantity: 440, expiry_date: '2027-07-19', batch_number: 'MON-2024-017', supplier: 'RespiraTech', unit_price: 5.75 },
-      
-      // Gastrointestinal
-      { drug_name: 'Omeprazole', generic_name: 'Omeprazole', dosage: '20mg', quantity: 800, expiry_date: '2027-12-20', batch_number: 'OME-2024-018', supplier: 'GastroMed', unit_price: 3.00 },
-      { drug_name: 'Ranitidine', generic_name: 'Ranitidine', dosage: '150mg', quantity: 560, expiry_date: '2027-06-17', batch_number: 'RAN-2024-019', supplier: 'GastroMed', unit_price: 2.50 },
-      { drug_name: 'Loperamide', generic_name: 'Loperamide', dosage: '2mg', quantity: 350, expiry_date: '2027-09-25', batch_number: 'LOP-2024-020', supplier: 'PharmaCorp Ltd', unit_price: 1.75 },
-      
-      // Mental Health
-      { drug_name: 'Sertraline', generic_name: 'Sertraline', dosage: '50mg', quantity: 480, expiry_date: '2027-11-08', batch_number: 'SER-2024-021', supplier: 'MindCare Pharma', unit_price: 6.50 },
-      { drug_name: 'Fluoxetine', generic_name: 'Fluoxetine', dosage: '20mg', quantity: 420, expiry_date: '2027-10-03', batch_number: 'FLU-2024-022', supplier: 'MindCare Pharma', unit_price: 5.80 },
-      { drug_name: 'Lorazepam', generic_name: 'Lorazepam', dosage: '1mg', quantity: 280, expiry_date: '2027-08-11', batch_number: 'LOR-2024-023', supplier: 'NeuroPharma', unit_price: 4.25 },
-      
-      // Vitamins & Supplements
-      { drug_name: 'Vitamin B Complex', generic_name: 'B-Complex', dosage: 'Standard', quantity: 950, expiry_date: '2028-03-15', batch_number: 'VIT-2024-024', supplier: 'NutriHealth', unit_price: 3.50 },
-      { drug_name: 'Vitamin C', generic_name: 'Ascorbic Acid', dosage: '500mg', quantity: 1100, expiry_date: '2028-01-22', batch_number: 'VIT-2024-025', supplier: 'NutriHealth', unit_price: 2.20 },
-      { drug_name: 'Calcium Carbonate', generic_name: 'Calcium Carbonate', dosage: '500mg', quantity: 870, expiry_date: '2027-12-28', batch_number: 'CAL-2024-026', supplier: 'BoneCare', unit_price: 2.75 },
-      { drug_name: 'Vitamin D3', generic_name: 'Cholecalciferol', dosage: '1000 IU', quantity: 780, expiry_date: '2028-02-10', batch_number: 'VIT-2024-027', supplier: 'NutriHealth', unit_price: 3.20 },
-      
-      // Topical & Others
-      { drug_name: 'Hydrocortisone Cream', generic_name: 'Hydrocortisone', dosage: '1%', quantity: 320, expiry_date: '2027-07-30', batch_number: 'HYD-2024-028', supplier: 'DermaCare', unit_price: 5.25 },
-      { drug_name: 'Clotrimazole Cream', generic_name: 'Clotrimazole', dosage: '1%', quantity: 290, expiry_date: '2027-09-12', batch_number: 'CLO-2024-029', supplier: 'DermaCare', unit_price: 4.80 },
-      { drug_name: 'Eye Drops (Artificial Tears)', generic_name: 'Hypromellose', dosage: '0.3%', quantity: 410, expiry_date: '2027-06-05', batch_number: 'EYE-2024-030', supplier: 'OptiCare', unit_price: 6.00 }
+      // EREID Program — Antimicrobials
+      { drug_name: 'Doxycycline', generic_name: 'Doxycycline Hyclate', dosage: '100mg capsule', quantity: 7000, expiry_date: '2027-11-30', batch_number: 'DOX-2025-001', supplier: 'DOH Central Warehouse', unit_price: 1.37, program: 'EREID Program', category: 'Antimicrobial' },
+      { drug_name: 'Cetirizine Dihydrochloride', generic_name: 'Cetirizine Dihydrochloride', dosage: '1mg/ml, 60ml syrup', quantity: 200, expiry_date: '2028-05-31', batch_number: 'CET-2025-045', supplier: 'DOH Central Warehouse', unit_price: 48.00, program: 'EREID Program', category: 'Antimicrobial' },
+      { drug_name: 'Azithromycin', generic_name: 'Azithromycin', dosage: '500mg tablet', quantity: 1000, expiry_date: '2027-09-15', batch_number: 'AZI-2025-010', supplier: 'DOH Central Warehouse', unit_price: 18.50, program: 'EREID Program', category: 'Antimicrobial' },
+      { drug_name: 'Amoxicillin', generic_name: 'Amoxicillin Trihydrate', dosage: '500mg capsule', quantity: 3000, expiry_date: '2027-06-30', batch_number: 'AMX-2025-020', supplier: 'DOH Central Warehouse', unit_price: 4.25, program: 'EREID Program', category: 'Antimicrobial' },
+      { drug_name: 'Co-trimoxazole', generic_name: 'Sulfamethoxazole + Trimethoprim', dosage: '400mg/80mg tablet', quantity: 2000, expiry_date: '2027-08-31', batch_number: 'COT-2025-031', supplier: 'DOH Central Warehouse', unit_price: 2.75, program: 'EREID Program', category: 'Antimicrobial' },
+      { drug_name: 'Ciprofloxacin', generic_name: 'Ciprofloxacin HCl', dosage: '500mg tablet', quantity: 1500, expiry_date: '2027-12-31', batch_number: 'CIP-2025-044', supplier: 'DOH Central Warehouse', unit_price: 6.50, program: 'EREID Program', category: 'Antimicrobial' },
+      { drug_name: 'Metronidazole', generic_name: 'Metronidazole', dosage: '500mg tablet', quantity: 2500, expiry_date: '2027-10-31', batch_number: 'MET-2025-057', supplier: 'DOH Central Warehouse', unit_price: 3.20, program: 'EREID Program', category: 'Antimicrobial' },
+      { drug_name: 'Clindamycin', generic_name: 'Clindamycin HCl', dosage: '300mg capsule', quantity: 800, expiry_date: '2027-07-31', batch_number: 'CLI-2025-062', supplier: 'DOH Central Warehouse', unit_price: 9.80, program: 'EREID Program', category: 'Antimicrobial' },
+      { drug_name: 'Rifampicin', generic_name: 'Rifampicin', dosage: '600mg capsule', quantity: 500, expiry_date: '2027-03-31', batch_number: 'RIF-2025-075', supplier: 'DOH Central Warehouse', unit_price: 22.00, program: 'TB Program', category: 'Antimicrobial' },
+      { drug_name: 'Isoniazid', generic_name: 'Isoniazid', dosage: '300mg tablet', quantity: 600, expiry_date: '2027-04-30', batch_number: 'INH-2025-081', supplier: 'DOH Central Warehouse', unit_price: 4.50, program: 'TB Program', category: 'Antimicrobial' },
+
+      // NIP — National Immunization Program
+      { drug_name: 'Bacillus Calmette-Guérin (BCG)', generic_name: 'BCG Vaccine', dosage: '1 vial (10 doses)', quantity: 375, expiry_date: '2026-01-30', batch_number: 'BCG-2025-089', supplier: 'DOH NIP Warehouse', unit_price: 212.93, program: 'NIP-National Immunization Program', category: 'Non-antimicrobial' },
+      { drug_name: 'Hepatitis B Vaccine', generic_name: 'Hepatitis B Vaccine (rDNA)', dosage: '1 vial (1 dose, pediatric)', quantity: 97, expiry_date: '2027-09-30', batch_number: 'HEP-2025-234', supplier: 'DOH NIP Warehouse', unit_price: 141.15, program: 'NIP-National Immunization Program', category: 'Non-antimicrobial' },
+      { drug_name: 'Human Papilloma Vaccine (HPV)', generic_name: 'HPV Recombinant Vaccine', dosage: '1 vial (1 dose)', quantity: 331, expiry_date: '2026-11-19', batch_number: 'HPV-2024-112', supplier: 'DOH NIP Warehouse', unit_price: 716.37, program: 'NIP-National Immunization Program', category: 'Non-antimicrobial' },
+      { drug_name: 'Inactivated Polio Vaccine (IPV)', generic_name: 'Inactivated Poliovirus Vaccine', dosage: '1 vial (10 doses)', quantity: 984, expiry_date: '2026-10-31', batch_number: 'IPV-2025-067', supplier: 'DOH NIP Warehouse', unit_price: 1190.00, program: 'NIP-National Immunization Program', category: 'Non-antimicrobial' },
+      { drug_name: 'Pentavalent Vaccine', generic_name: 'DPT-HepB-Hib Vaccine', dosage: '1 vial (1 dose)', quantity: 10, expiry_date: '2027-07-31', batch_number: 'PEN-2025-189', supplier: 'DOH NIP Warehouse', unit_price: 67.55, program: 'NIP-National Immunization Program', category: 'Non-antimicrobial' },
+      { drug_name: 'Pneumococcal Conjugate Vaccine (PCV10)', generic_name: 'Pneumococcal Conjugate Vaccine', dosage: '1 vial (4 doses)', quantity: 686, expiry_date: '2026-12-31', batch_number: 'PCV-2025-223', supplier: 'DOH NIP Warehouse', unit_price: 1225.60, program: 'NIP-National Immunization Program', category: 'Non-antimicrobial' },
+      { drug_name: 'Tetanus-Diphtheria Vaccine', generic_name: 'Td Vaccine', dosage: '1 vial (10 doses)', quantity: 440, expiry_date: '2026-12-31', batch_number: 'TET-2025-334', supplier: 'DOH NIP Warehouse', unit_price: 1200.00, program: 'NIP-National Immunization Program', category: 'Non-antimicrobial' },
+      { drug_name: 'Measles and Rubella (MR) Vaccine', generic_name: 'MR Vaccine (live attenuated)', dosage: '1 vial (10 doses)', quantity: 0, expiry_date: '2026-08-31', batch_number: 'MRV-2024-012', supplier: 'DOH NIP Warehouse', unit_price: 472.44, program: 'NIP-National Immunization Program', category: 'Non-antimicrobial' },
+      { drug_name: 'Oral Polio Vaccine (OPV)', generic_name: 'Oral Poliovirus Vaccine (trivalent)', dosage: '1 vial (20 doses)', quantity: 250, expiry_date: '2026-09-30', batch_number: 'OPV-2025-098', supplier: 'DOH NIP Warehouse', unit_price: 185.00, program: 'NIP-National Immunization Program', category: 'Non-antimicrobial' },
+
+      // Maternal & Child Health / Others
+      { drug_name: 'Ferrous Sulfate', generic_name: 'Ferrous Sulfate', dosage: '325mg tablet', quantity: 5000, expiry_date: '2028-06-30', batch_number: 'FER-2025-110', supplier: 'DOH Central Warehouse', unit_price: 1.10, program: 'Maternal & Child Health', category: 'Non-antimicrobial' },
+      { drug_name: 'Folic Acid', generic_name: 'Folic Acid', dosage: '1mg tablet', quantity: 4000, expiry_date: '2028-03-31', batch_number: 'FOL-2025-122', supplier: 'DOH Central Warehouse', unit_price: 0.95, program: 'Maternal & Child Health', category: 'Non-antimicrobial' },
+      { drug_name: 'Vitamin A', generic_name: 'Retinol (Vitamin A)', dosage: '200,000 IU capsule', quantity: 800, expiry_date: '2027-12-31', batch_number: 'VIT-2025-135', supplier: 'DOH Central Warehouse', unit_price: 5.60, program: 'Micronutrient Supplementation', category: 'Non-antimicrobial' },
+      { drug_name: 'Zinc Sulfate', generic_name: 'Zinc Sulfate', dosage: '20mg dispersible tablet', quantity: 3000, expiry_date: '2027-09-30', batch_number: 'ZNS-2025-148', supplier: 'DOH Central Warehouse', unit_price: 2.30, program: 'Micronutrient Supplementation', category: 'Non-antimicrobial' },
+      { drug_name: 'Oral Rehydration Salts (ORS)', generic_name: 'Oral Rehydration Salts', dosage: '1 sachet (1L)', quantity: 2000, expiry_date: '2028-01-31', batch_number: 'ORS-2025-157', supplier: 'DOH Central Warehouse', unit_price: 8.50, program: 'Diarrhea Management', category: 'Non-antimicrobial' },
+      { drug_name: 'Paracetamol', generic_name: 'Acetaminophen', dosage: '500mg tablet', quantity: 5000, expiry_date: '2027-12-31', batch_number: 'PAR-2025-001', supplier: 'DOH Central Warehouse', unit_price: 1.50, program: 'General', category: 'Others' },
+      { drug_name: 'Oxytocin', generic_name: 'Oxytocin', dosage: '10 IU/mL, 1mL ampoule', quantity: 300, expiry_date: '2026-06-30', batch_number: 'OXY-2025-168', supplier: 'DOH Central Warehouse', unit_price: 35.00, program: 'Safe Motherhood', category: 'Others' },
+      { drug_name: 'Magnesium Sulfate', generic_name: 'Magnesium Sulfate', dosage: '50% solution, 10mL vial', quantity: 200, expiry_date: '2027-06-30', batch_number: 'MGS-2025-179', supplier: 'DOH Central Warehouse', unit_price: 55.00, program: 'Safe Motherhood', category: 'Others' },
+      { drug_name: 'Artemether + Lumefantrine', generic_name: 'Artemether + Lumefantrine', dosage: '20mg/120mg tablet', quantity: 600, expiry_date: '2027-05-31', batch_number: 'ART-2025-190', supplier: 'DOH Central Warehouse', unit_price: 12.75, program: 'Malaria Program', category: 'Antimicrobial' },
+      { drug_name: 'Salbutamol Sulfate', generic_name: 'Salbutamol Sulfate', dosage: '2mg/5ml syrup, 60ml', quantity: 500, expiry_date: '2027-08-31', batch_number: 'SAL-2025-202', supplier: 'DOH Central Warehouse', unit_price: 28.00, program: 'EREID Program', category: 'Non-antimicrobial' },
+      { drug_name: 'Betamethasone', generic_name: 'Betamethasone Valerate', dosage: '4mg/mL, 1mL ampoule', quantity: 150, expiry_date: '2027-01-31', batch_number: 'BET-2025-215', supplier: 'DOH Central Warehouse', unit_price: 65.00, program: 'Safe Motherhood', category: 'Others' },
     ];
 
     let totalItemsAdded = 0;
@@ -1673,7 +1754,8 @@ app.post("/make-server-c88a69d7/populate-sample-medicines", async (c) => {
     for (const branch of branches) {
       try {
         // Prepare inventory records with branch_id
-        const inventoryRecords = sampleMedicines.map(med => ({
+        // Strip fields not present in the inventory table schema (category, program)
+        const inventoryRecords = sampleMedicines.map(({ category, program, ...med }) => ({
           ...med,
           branch_id: branch.id
         }));
