@@ -10,17 +10,23 @@ class AuthManager {
   private sessionCache: Session | null = null;
   private lastFetchTime: number = 0;
   private pendingRequest: Promise<string | null> | null = null;
-  private readonly CACHE_DURATION = 30000; // 30 seconds cache (increased from 5s)
-  private readonly MAX_RETRIES = 5; // Increased retries
-  private readonly INITIAL_RETRY_DELAY = 50; // Shorter initial delay
+  private readonly CACHE_DURATION = 30000; // 30 seconds cache
+  private readonly MAX_RETRIES = 5;
+  private readonly INITIAL_RETRY_DELAY = 50;
 
   /**
    * Get fresh authentication token with caching and retry logic
    */
   async getToken(): Promise<string | null> {
-    // Return cached token if still valid
     const now = Date.now();
-    if (this.tokenCache && this.sessionCache && (now - this.lastFetchTime) < this.CACHE_DURATION) {
+
+    // Return cached token only if still valid AND not expired
+    if (
+      this.tokenCache &&
+      this.sessionCache &&
+      (now - this.lastFetchTime) < this.CACHE_DURATION &&
+      !this.isTokenExpiredOrExpiring(this.tokenCache)
+    ) {
       console.log('🔄 Using cached auth token (age: ' + Math.round((now - this.lastFetchTime) / 1000) + 's)');
       return this.tokenCache;
     }
@@ -33,7 +39,7 @@ class AuthManager {
 
     // Create new request with retry logic
     this.pendingRequest = this.fetchTokenWithRetry();
-    
+
     try {
       const token = await this.pendingRequest;
       return token;
@@ -43,11 +49,31 @@ class AuthManager {
   }
 
   /**
+   * Decode JWT payload and return expiry timestamp in ms, or 0 on failure
+   */
+  private getTokenExpiry(token: string): number {
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      return typeof payload.exp === 'number' ? payload.exp * 1000 : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Returns true if the token is already expired or will expire within 60 seconds
+   */
+  private isTokenExpiredOrExpiring(token: string): boolean {
+    const expiresAt = this.getTokenExpiry(token);
+    return expiresAt > 0 && Date.now() >= expiresAt - 60_000;
+  }
+
+  /**
    * Fetch token with exponential backoff retry
    */
   private async fetchTokenWithRetry(): Promise<string | null> {
     let lastError: any = null;
-    
+
     for (let attempt = 0; attempt < this.MAX_RETRIES; attempt++) {
       try {
         if (attempt > 0) {
@@ -62,13 +88,13 @@ class AuthManager {
         }
       } catch (error: any) {
         lastError = error;
-        
+
         // If it's a lock error, retry
         if (error.message?.includes('Lock') || error.message?.includes('lock')) {
           console.warn(`⚠️ Lock contention detected on attempt ${attempt + 1}, retrying...`);
           continue;
         }
-        
+
         // For other errors, don't retry
         console.error('❌ Non-recoverable auth error:', error);
         break;
@@ -80,14 +106,15 @@ class AuthManager {
   }
 
   /**
-   * Fetch token from Supabase (single attempt)
+   * Fetch token from Supabase (single attempt).
+   * Forces a session refresh if the access token is expired or expiring within 60 s.
    */
   private async fetchToken(): Promise<string | null> {
     try {
       console.log('🔐 Fetching fresh authentication token...');
-      
+
       const { data: { session }, error } = await supabase.auth.getSession();
-      
+
       if (error) {
         console.error('❌ Session error:', error.message);
         throw error;
@@ -99,7 +126,25 @@ class AuthManager {
         return null;
       }
 
-      // Update cache
+      // If the stored access token is expired or expiring soon, force-refresh it
+      if (this.isTokenExpiredOrExpiring(session.access_token)) {
+        console.log('🔄 Access token expired or expiring soon — forcing refresh...');
+        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+
+        if (refreshError || !refreshed?.session) {
+          console.error('❌ Failed to refresh session:', refreshError?.message);
+          this.clearCache();
+          return null;
+        }
+
+        this.tokenCache = refreshed.session.access_token;
+        this.sessionCache = refreshed.session;
+        this.lastFetchTime = Date.now();
+        console.log('✅ Token refreshed successfully');
+        return refreshed.session.access_token;
+      }
+
+      // Token is still valid — update cache
       this.tokenCache = session.access_token;
       this.sessionCache = session;
       this.lastFetchTime = Date.now();
@@ -116,14 +161,12 @@ class AuthManager {
    * Get current session with caching
    */
   async getSession(): Promise<Session | null> {
-    // Return cached session if still valid
     const now = Date.now();
     if (this.sessionCache && (now - this.lastFetchTime) < this.CACHE_DURATION) {
       console.log('🔄 Using cached session');
       return this.sessionCache;
     }
 
-    // Fetch new token (which also updates session cache)
     await this.getToken();
     return this.sessionCache;
   }

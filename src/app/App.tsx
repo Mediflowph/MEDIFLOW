@@ -5,6 +5,8 @@ import { authManager } from '@/app/utils/authManager';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
 import { kvStore } from '@/app/utils/kvStore';
 import { LoginPage } from '@/app/components/auth/LoginPage';
+import { ResetPasswordPage } from '@/app/components/auth/ResetPasswordPage';
+import { ExpiredLinkPage } from '@/app/components/auth/ExpiredLinkPage';
 import { Sidebar } from '@/app/components/Sidebar';
 import { Header } from '@/app/components/Header';
 import { HomeView } from '@/app/components/views/HomeView';
@@ -201,6 +203,42 @@ export default function App() {
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  // Detect password-recovery flow immediately from the URL hash so we never
+  // miss the Supabase PASSWORD_RECOVERY event (which fires during client init,
+  // before the onAuthStateChange listener is registered in the useEffect).
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(() => {
+    try {
+      const hash = window.location.hash;
+      const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
+      return params.get('type') === 'recovery';
+    } catch {
+      return false;
+    }
+  });
+
+  // Detect custom KV reset token from ?reset_token= query param (our own flow)
+  const [resetToken, setResetToken] = useState<string | null>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('reset_token') || null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Detect OTP-expired / access_denied errors from Supabase redirect
+  const [isLinkExpired, setIsLinkExpired] = useState(() => {
+    try {
+      const hash = window.location.hash;
+      const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
+      return (
+        params.get('error') === 'access_denied' &&
+        params.get('error_code') === 'otp_expired'
+      );
+    } catch {
+      return false;
+    }
+  });
 
   // Get fresh authentication token using centralized auth manager
   const getFreshToken = async (): Promise<string | null> => {
@@ -268,11 +306,11 @@ export default function App() {
           dosage: item.dosage || '',
           unit: item.unit || 'units',
           batchNumber: item.batch_number || '',
-          beginningInventory: item.quantity || 0,
-          quantityReceived: 0,
+          beginningInventory: item.beginning_inventory || item.quantity || 0,
+          quantityReceived: item.quantity_received || 0,
           dateReceived: item.date_received || item.created_at || '',
           unitCost: item.unit_cost || item.unit_price || 0,
-          quantityDispensed: 0,
+          quantityDispensed: item.quantity_dispensed || 0,
           expirationDate: item.expiration_date || item.expiry_date || '',
           remarks: item.remarks || ''
         }));
@@ -371,6 +409,27 @@ export default function App() {
     return () => clearTimeout(syncTimeout);
   }, [inventory, currentBranch?.id]); // Only trigger on inventory or branch changes
 
+  // Supabase real-time subscription — re-fetch inventory when the table changes
+  useEffect(() => {
+    if (!currentBranch?.id || currentBranch.id === 'all' || currentBranch.id === 'all-branches') return;
+
+    const channel = supabase
+      .channel(`inventory-realtime-${currentBranch.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'inventory' },
+        () => {
+          console.log('📡 Real-time: inventory table changed, refreshing…');
+          fetchInventory(currentBranch.id);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentBranch?.id]);
+
   // Ensure data loaded flag is properly set when session changes
   useEffect(() => {
     if (!session) {
@@ -410,19 +469,86 @@ export default function App() {
     });
   };
 
+  const handleClearInventory = async () => {
+    if (!session?.user?.id || !currentBranch?.id) {
+      toast.error('Cannot clear inventory', { description: 'No active session or branch.' });
+      return;
+    }
+
+    try {
+      const token = await getFreshToken();
+      if (!token) {
+        toast.error('Authentication error', { description: 'Could not get auth token.' });
+        return;
+      }
+
+      toast.info('Clearing inventory...', { description: 'Deleting all inventory data from the database.' });
+
+      const response = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/delete-branch/${session.user.id}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'X-User-Token': token,
+            'Authorization': `Bearer ${publicAnonKey}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `HTTP ${response.status}`);
+      }
+
+      setInventory([]);
+      setIsDataLoaded(true);
+      toast.success('Inventory Cleared', { description: 'All inventory data has been deleted from the database.' });
+    } catch (error: any) {
+      console.error('❌ Clear inventory error:', error);
+      toast.error('Clear Failed', { description: error.message || 'Could not clear inventory.' });
+    }
+  };
+  
   useEffect(() => {
     let mounted = true;
 
     const initializeAuth = async () => {
       try {
         console.log('Initializing authentication...');
+
+        // ── Password-recovery path ──────────────────────────────────────────
+        // detectSessionInUrl is false (needed to prevent auth lock contention),
+        // so Supabase won't auto-process the recovery hash.  We do it manually:
+        // extract access_token + refresh_token from the hash and call setSession()
+        // so that ResetPasswordPage can call supabase.auth.updateUser() successfully.
+        const hash = window.location.hash;
+        const hashParams = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
+        if (hashParams.get('type') === 'recovery') {
+          console.log('🔑 Password recovery URL detected — manually restoring session from hash');
+          const accessToken = hashParams.get('access_token');
+          const refreshToken = hashParams.get('refresh_token');
+          if (accessToken && refreshToken) {
+            const { error: sessionError } = await supabase.auth.setSession({
+              access_token: accessToken,
+              refresh_token: refreshToken,
+            });
+            if (sessionError) {
+              console.error('❌ Failed to set recovery session:', sessionError);
+            } else {
+              console.log('✅ Recovery session established — reset form ready');
+            }
+          }
+          if (mounted) setIsLoading(false);
+          return;
+        }
+
+        // ── Normal login path ───────────────────────────────────────────────
         const { data: { session: initialSession } } = await supabase.auth.getSession();
-        
+
         if (mounted) {
           if (initialSession) {
             console.log('Session found, loading user data...');
             setSession(initialSession);
-            // Update auth manager cache
             authManager.updateCache(initialSession);
             const savedBranch = localStorage.getItem('mediflow_current_branch');
             if (savedBranch) {
@@ -430,7 +556,7 @@ export default function App() {
               setCurrentBranch(parsedBranch);
               await fetchInventory(parsedBranch.id);
             }
-            setIsLoading(false); // Set loading false after fetch completes
+            setIsLoading(false);
           } else {
             console.log('No active session found');
             setSession(null);
@@ -451,6 +577,13 @@ export default function App() {
       if (!mounted) return;
 
       console.log('Auth state changed:', event);
+
+      if (event === 'PASSWORD_RECOVERY') {
+        // User clicked the reset link — show the reset password form
+        setIsPasswordRecovery(true);
+        setIsLoading(false);
+        return;
+      }
       
       if (event === 'SIGNED_IN') {
         setSession(currentSession);
@@ -554,7 +687,7 @@ export default function App() {
   const renderView = () => {
     switch (activeMenuItem) {
       case 'home':
-        return <HomeView inventory={inventory} userToken={session?.access_token} userRole={userRole} />;
+        return <HomeView inventory={inventory} userToken={session?.access_token} userRole={userRole} branchName={currentBranch?.name} />;
       case 'receive':
         const existingDrugs = Array.from(new Set(inventory.map(item => item.drugName)));
         return <ReceiveMedicationsView onAddStock={handleAddStock} existingDrugs={existingDrugs} inventory={inventory} />;
@@ -565,7 +698,7 @@ export default function App() {
       case 'stock-locator':
         return <StockLocatorView userToken={session?.access_token} />;
       case 'inventory':
-        return <InventoryCheckView inventory={inventory} />;
+        return <InventoryCheckView inventory={inventory} onClearInventory={handleClearInventory} />;
       case 'reports':
         return <ReportsView 
           inventory={inventory} 
@@ -575,7 +708,7 @@ export default function App() {
           branchName={currentBranch?.name || 'Unknown Branch'}
         />; 
       case 'alerts':
-        return <AlertsView inventory={inventory} userToken={session?.access_token} userRole={userRole} />;
+        return <AlertsView inventory={inventory} userToken={session?.access_token} userRole={userRole} branchName={currentBranch?.name} />;
       case 'admin-dashboard':
         return session?.access_token ? <AdminDashboardView userToken={session.access_token} /> : null;
       case 'branch-management':
@@ -618,6 +751,50 @@ export default function App() {
       <div className="min-h-screen bg-gradient-to-br from-[#9867C5] to-blue-700 flex items-center justify-center">
         <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
       </div>
+    );
+  }
+
+  if (isPasswordRecovery) {
+    return (
+      <>
+        <ResetPasswordPage
+          onPasswordReset={() => {
+            setIsPasswordRecovery(false);
+            setSession(null);
+          }}
+        />
+        <Toaster />
+      </>
+    );
+  }
+
+  // Custom KV-token reset flow — ?reset_token= in query string
+  if (resetToken) {
+    return (
+      <>
+        <ResetPasswordPage
+          token={resetToken}
+          onPasswordReset={() => {
+            setResetToken(null);
+            // Clean the token from the URL so the login page loads clean
+            window.history.replaceState(null, '', window.location.pathname);
+          }}
+        />
+        <Toaster />
+      </>
+    );
+  }
+
+  if (isLinkExpired) {
+    return (
+      <>
+        <ExpiredLinkPage onBack={() => {
+          setIsLinkExpired(false);
+          // Clean the error hash from the URL so the login page loads clean
+          window.history.replaceState(null, '', window.location.pathname);
+        }} />
+        <Toaster />
+      </>
     );
   }
 
