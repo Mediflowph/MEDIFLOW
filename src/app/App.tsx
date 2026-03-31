@@ -36,6 +36,7 @@ export interface InventoryBatch {
   quantityDispensed: number;
   expirationDate: string;
   remarks: string;
+  category: string;
 }
 
 // Mock initial inventory data
@@ -55,6 +56,7 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 0,
       expirationDate: '2027-11-30',
       remarks: '',
+      category: 'Antimicrobial'
     },
     {
       id: '2',
@@ -70,6 +72,7 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 100,
       expirationDate: '2028-05-31',
       remarks: '',
+      category: 'Antimicrobial'
     },
     {
       id: '3',
@@ -85,6 +88,7 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 161,
       expirationDate: '2026-01-30',
       remarks: '',
+      category: 'Non-antimicrobial'
     },
     {
       id: '4',
@@ -100,6 +104,7 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 63,
       expirationDate: '2027-09-30',
       remarks: '',
+      category: 'Non-antimicrobial'
     },
     {
       id: '5',
@@ -115,6 +120,7 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 296,
       expirationDate: '2026-11-19',
       remarks: '',
+      category: 'Non-antimicrobial'
     },
     {
       id: '6',
@@ -130,6 +136,7 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 91,
       expirationDate: '2026-10-31',
       remarks: '',
+      category: 'Non-antimicrobial'
     },
     {
       id: '7',
@@ -145,6 +152,7 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 666,
       expirationDate: '2025-08-31',
       remarks: '',
+      category: 'Non-antimicrobial'
     },
     {
       id: '8',
@@ -160,6 +168,7 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 0,
       expirationDate: '2027-07-31',
       remarks: '',
+      category: 'Non-antimicrobial'
     },
     {
       id: '9',
@@ -175,6 +184,7 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 1118,
       expirationDate: '2026-12-31',
       remarks: '',
+      category: 'Non-antimicrobial'
     },
     {
       id: '10',
@@ -190,6 +200,7 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 572,
       expirationDate: '2026-12-31',
       remarks: '',
+      category: 'Non-antimicrobial'
     },
   ];
 };
@@ -312,7 +323,13 @@ export default function App() {
           unitCost: item.unit_cost || item.unit_price || 0,
           quantityDispensed: item.quantity_dispensed || 0,
           expirationDate: item.expiration_date || item.expiry_date || '',
-          remarks: item.remarks || ''
+          remarks: item.remarks || '',
+          category: item.category || (() => {
+            const prog = (item.program || '').toLowerCase();
+            if (prog.includes('ereid') || prog.includes('tb') || prog.includes('antimicro')) return 'Antimicrobial';
+            if (prog.includes('nip') || prog.includes('immuniz')) return 'Non-antimicrobial';
+            return 'Others';
+          })(),
         }));
         setInventory(transformedInventory);
       } else {
@@ -633,7 +650,24 @@ export default function App() {
     setCurrentBranch(branch);
     localStorage.setItem('mediflow_current_branch', JSON.stringify(branch));
     fetchInventory(branch.id);
-    
+
+    // Ensure admin/HO users always have a row in the users table
+    const loginRole = newSession?.user?.user_metadata?.role;
+    if (loginRole === 'Administrator' || loginRole === 'Health Officer') {
+      fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/ensure-user-row`,
+        {
+          method: 'POST',
+          headers: {
+            'X-User-Token': newSession.access_token,
+            'Authorization': `Bearer ${publicAnonKey}`,
+          },
+        }
+      ).then(r => r.json())
+        .then(d => console.log('✅ ensure-user-row:', d))
+        .catch(e => console.warn('⚠️ ensure-user-row failed:', e));
+    }
+
     // Log the audit event
     kvStore.addAuditLog({
       userId: newSession.user.id,

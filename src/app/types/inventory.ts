@@ -2,6 +2,7 @@ export interface InventoryBatch {
   id: string;
   drugName: string;
   program: string;
+  category: string; // 'Antimicrobial' | 'Non-antimicrobial' | 'Others'
   dosage: string;
   unit: string;
   batchNumber: string;
