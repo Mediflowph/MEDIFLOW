@@ -141,8 +141,9 @@ app.post("/make-server-c88a69d7/signup", async (c) => {
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     );
-
-    const requiresApproval = role === 'Pharmacy Staff';
+    
+    // Auto-approve Administrators, require approval for Pharmacy Staff
+    const isApproved = role === 'Administrator';
     
     const { data, error } = await supabase.auth.admin.createUser({
       email,
@@ -152,7 +153,7 @@ app.post("/make-server-c88a69d7/signup", async (c) => {
         role, 
         branch,
         profilePicture: null,
-        approved: requiresApproval ? false : true
+        approved: isApproved
       },
       email_confirm: true
     });
@@ -170,7 +171,7 @@ app.post("/make-server-c88a69d7/signup", async (c) => {
         branch_id: null,  // Will be set when user logs in with a branch
         name: name,
         role: role,
-        approved: !requiresApproval
+        approved: isApproved
       });
     
     if (insertError) {
@@ -180,14 +181,14 @@ app.post("/make-server-c88a69d7/signup", async (c) => {
       console.log(`�� User inserted into users table: ${email}`);
     }
 
-    console.log(`✅ Created user: ${email} (${role}) - Approved: ${!requiresApproval}`);
+    console.log(`✅ Created user: ${email} (${role}) - Approved: ${isApproved}`);
     return c.json({ 
       success: true, 
-      message: requiresApproval 
-        ? 'Account created successfully. Please wait for admin approval before signing in.' 
-        : 'Account created successfully',
+      message: isApproved 
+        ? 'Account created successfully' 
+        : 'Account created - awaiting administrator approval',
       userId: data.user.id,
-      requiresApproval
+      requiresApproval: !isApproved
     });
   } catch (err) {
     console.error("Signup error:", err);
@@ -344,6 +345,7 @@ app.get("/make-server-c88a69d7/inventory/all-branches", async (c) => {
     
     console.log('🔍 Fetching all branches for stock locator / branch management...');
     
+    // 1. Fetch branches
     const { data: branches, error: branchError } = await supabase
       .from('branches')
       .select('id, name, location, contact_person, contact_phone, contact_email')
@@ -360,57 +362,67 @@ app.get("/make-server-c88a69d7/inventory/all-branches", async (c) => {
       console.log('⚠️ No branches found in database');
       return c.json([]);
     }
-    
-    // Get user metadata from Supabase Auth for contact info
-    const { data: authUsersData } = await supabase.auth.admin.listUsers();
-    const authUserMap = new Map();
-    authUsersData?.users.forEach((user: any) => {
-      authUserMap.set(user.id, {
-        email: user.email || '',
-        name: user.user_metadata?.name || user.email?.split('@')[0] || 'Unknown',
-        phone: user.user_metadata?.branchContact || ''
-      });
-    });
 
-    // Fetch users to get contact information per branch
+    // 2. Fetch users from users table
     const { data: users } = await supabase
       .from('users')
       .select('id, name, role, branch_id')
       .not('branch_id', 'is', null);
-    
-    const result = [];
-    
-    for (const branch of branches) {
-      // Fetch ALL inventory items for the branch (including 0 qty for management view)
-      const { data: inventory, error: invError } = await supabase
-        .from('inventory')
-        .select('*')
-        .eq('branch_id', branch.id)
-        .order('drug_name', { ascending: true });
-      
-      if (invError) {
-        console.error(`❌ Error fetching inventory for branch ${branch.id}:`, invError);
-        continue;
-      }
 
+    // 3. Fetch auth users SEPARATELY (not in Promise.all) with reduced perPage to avoid crash
+    let authUserMap = new Map();
+    try {
+      const { data: authUsersData } = await supabase.auth.admin.listUsers({ perPage: 100 });
+      authUsersData?.users.forEach((user: any) => {
+        authUserMap.set(user.id, {
+          email: user.email || '',
+          name: user.user_metadata?.name || user.email?.split('@')[0] || 'Unknown',
+          phone: user.user_metadata?.branchContact || ''
+        });
+      });
+    } catch (authErr) {
+      console.warn('⚠️ Failed to fetch auth users for contact info, continuing without:', authErr);
+    }
+
+    // 4. Fetch ALL inventory in ONE query with explicit columns, then group by branch
+    const branchIds = branches.map(b => b.id);
+    const { data: allInventory, error: invError } = await supabase
+      .from('inventory')
+      .select('id, drug_name, generic_name, dosage, batch_number, quantity, expiry_date, supplier, unit_price, branch_id, created_at')
+      .in('branch_id', branchIds)
+      .order('drug_name', { ascending: true });
+
+    if (invError) {
+      console.error('❌ Error fetching all inventory:', invError);
+      return c.json({ error: 'Failed to fetch inventory' }, 500);
+    }
+
+    // Group inventory by branch_id
+    const inventoryByBranch = new Map<string, any[]>();
+    (allInventory || []).forEach((item: any) => {
+      const list = inventoryByBranch.get(item.branch_id) || [];
+      list.push(item);
+      inventoryByBranch.set(item.branch_id, list);
+    });
+
+    // 5. Build result
+    const result = branches.map(branch => {
       const branchUser = users?.find((u: any) => u.branch_id === branch.id);
       const authUserInfo = branchUser ? authUserMap.get(branchUser.id) : null;
       
-      result.push({
+      return {
         userId: branchUser?.id || branch.id,
-        branchId: branch.id,  // always the real branch UUID
+        branchId: branch.id,
         userName: branch.contact_person || authUserInfo?.name || 'Branch Contact',
         branchName: branch.name,
         userRole: branchUser?.role || 'Branch',
         userEmail: branch.contact_email || authUserInfo?.email || '',
         userPhone: branch.contact_phone || authUserInfo?.phone || '',
-        inventory: inventory || []
-      });
-      
-      console.log(`📊 Branch "${branch.name}": ${inventory?.length || 0} items`);
-    }
-    
-    console.log(`✅ Retrieved ${result.length} branch inventories from SQL`);
+        inventory: inventoryByBranch.get(branch.id) || []
+      };
+    });
+
+    console.log(`✅ Retrieved ${result.length} branch inventories from SQL (${allInventory?.length || 0} total items)`);
     return c.json(result);
   } catch (err) {
     console.error("❌ Fetch all inventories error:", err);
@@ -630,12 +642,6 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
         batch_number: item.batchNumber || item.batch_number || null,
         supplier: item.supplier || null,
         unit_price: item.unitCost || item.unit_price || item.unitPrice || null,
-        beginning_inventory: item.beginningInventory || item.beginning_inventory || 0,
-        quantity_received: item.quantityReceived || item.quantity_received || 0,
-        date_received: item.dateReceived || item.date_received || null,
-        quantity_dispensed: item.quantityDispensed || item.quantity_dispensed || 0,
-        expiration_date: item.expirationDate || item.expiration_date || item.expiry_date || null,
-        unit_cost: item.unitCost || item.unit_cost || item.unit_price || null,
       }));
       
       const { error: insertError } = await supabase
@@ -1049,49 +1055,6 @@ app.post("/make-server-c88a69d7/inventory/generate-report/:userId", async (c) =>
   }
 });
 
-app.get("/make-server-c88a69d7/pending-users", async (c) => {
-  try {
-    const authResult = await checkAuth(c);
-    if ('error' in authResult) {
-      return c.json({ error: authResult.error }, 401);
-    }
-
-    const userRole = authResult.user.user_metadata?.role;
-    if (userRole !== 'Administrator') {
-      return c.json({ error: 'Unauthorized: Administrator access required' }, 403);
-    }
-
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    );
-
-    const { data: usersData, error } = await supabase.auth.admin.listUsers();
-    
-    if (error) {
-      console.error('❌ Error fetching users:', error);
-      return c.json({ error: 'Failed to fetch users' }, 500);
-    }
-
-    const pendingUsers = usersData?.users
-      .filter(user => user.user_metadata?.approved === false)
-      .map(user => ({
-        id: user.id,
-        email: user.email,
-        name: user.user_metadata?.name || 'Unknown',
-        role: user.user_metadata?.role || 'Unknown',
-        branch: user.user_metadata?.branch || 'Unknown',
-        createdAt: user.created_at
-      })) || [];
-
-    console.log(`✅ Retrieved ${pendingUsers.length} pending user(s)`);
-    return c.json(pendingUsers);
-  } catch (err) {
-    console.error("❌ Fetch pending users error:", err);
-    return c.json({ error: "Failed to fetch pending users" }, 500);
-  }
-});
-
 app.get("/make-server-c88a69d7/all-users", async (c) => {
   try {
     const authResult = await checkAuth(c);
@@ -1217,7 +1180,8 @@ app.get("/make-server-c88a69d7/all-users", async (c) => {
   }
 });
 
-app.post("/make-server-c88a69d7/approve-user/:userId", async (c) => {
+// Approve a pending user account
+app.post("/make-server-c88a69d7/approve-user", async (c) => {
   try {
     const authResult = await checkAuth(c);
     if ('error' in authResult) {
@@ -1229,51 +1193,56 @@ app.post("/make-server-c88a69d7/approve-user/:userId", async (c) => {
       return c.json({ error: 'Unauthorized: Administrator access required' }, 403);
     }
 
-    const userIdToApprove = c.req.param('userId');
+    const { userId } = await c.req.json();
+    
+    if (!userId) {
+      return c.json({ error: 'User ID required' }, 400);
+    }
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     );
 
-    const { data: userData, error: getUserError } = await supabase.auth.admin.getUserById(userIdToApprove);
+    // Update user metadata in auth
+    const { data: targetUser, error: getUserError } = await supabase.auth.admin.getUserById(userId);
     
-    if (getUserError || !userData) {
+    if (getUserError || !targetUser?.user) {
       return c.json({ error: 'User not found' }, 404);
     }
 
-    const { data, error } = await supabase.auth.admin.updateUserById(
-      userIdToApprove,
-      {
-        user_metadata: {
-          ...userData.user.user_metadata,
-          approved: true
-        }
-      }
-    );
-
-    if (error) {
-      console.error('❌ Error approving user:', error);
-      return c.json({ error: error.message }, 400);
-    }
-
-    console.log(`✅ Approved user: ${userIdToApprove} (${userData.user.email})`);
-    return c.json({ 
-      success: true, 
-      message: 'User approved successfully',
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        name: data.user.user_metadata?.name
+    const { error: updateAuthError } = await supabase.auth.admin.updateUserById(userId, {
+      user_metadata: {
+        ...targetUser.user.user_metadata,
+        approved: true
       }
     });
+
+    if (updateAuthError) {
+      console.error('❌ Error updating user auth metadata:', updateAuthError);
+      return c.json({ error: 'Failed to approve user' }, 500);
+    }
+
+    // Update user in users table
+    const { error: updateTableError } = await supabase
+      .from('users')
+      .update({ approved: true })
+      .eq('id', userId);
+
+    if (updateTableError) {
+      console.error('❌ Error updating users table:', updateTableError);
+    }
+
+    console.log(`✅ User approved: ${userId}`);
+    return c.json({ success: true, message: 'User approved successfully' });
   } catch (err) {
     console.error("❌ Approve user error:", err);
     return c.json({ error: "Failed to approve user" }, 500);
   }
 });
 
-app.post("/make-server-c88a69d7/reject-user/:userId", async (c) => {
+// Reject a pending user account
+app.post("/make-server-c88a69d7/reject-user", async (c) => {
   try {
     const authResult = await checkAuth(c);
     if ('error' in authResult) {
@@ -1285,28 +1254,37 @@ app.post("/make-server-c88a69d7/reject-user/:userId", async (c) => {
       return c.json({ error: 'Unauthorized: Administrator access required' }, 403);
     }
 
-    const userIdToReject = c.req.param('userId');
+    const { userId } = await c.req.json();
+    
+    if (!userId) {
+      return c.json({ error: 'User ID required' }, 400);
+    }
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     );
 
-    const { data: userData } = await supabase.auth.admin.getUserById(userIdToReject);
-    const userEmail = userData?.user.email || 'unknown';
+    // Delete from users table first
+    const { error: deleteTableError } = await supabase
+      .from('users')
+      .delete()
+      .eq('id', userId);
 
-    const { error } = await supabase.auth.admin.deleteUser(userIdToReject);
-    
-    if (error) {
-      console.error('❌ Error rejecting user:', error);
-      return c.json({ error: error.message }, 400);
+    if (deleteTableError) {
+      console.error('❌ Error deleting from users table:', deleteTableError);
     }
 
-    console.log(`✅ Rejected and deleted user: ${userIdToReject} (${userEmail})`);
-    return c.json({ 
-      success: true, 
-      message: 'User registration rejected and account deleted'
-    });
+    // Delete from auth
+    const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(userId);
+
+    if (deleteAuthError) {
+      console.error('❌ Error deleting user from auth:', deleteAuthError);
+      return c.json({ error: 'Failed to reject user' }, 500);
+    }
+
+    console.log(`✅ User rejected and deleted: ${userId}`);
+    return c.json({ success: true, message: 'User rejected successfully' });
   } catch (err) {
     console.error("❌ Reject user error:", err);
     return c.json({ error: "Failed to reject user" }, 500);
