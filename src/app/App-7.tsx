@@ -723,7 +723,7 @@ export default function App() {
       case 'stock-locator':
         return <StockLocatorView userToken={session?.access_token} />;
       case 'inventory':
-        return <InventoryCheckView inventory={inventory} onClearInventory={handleClearInventory} userRole={userRole} />;
+        return <InventoryCheckView inventory={inventory} onClearInventory={handleClearInventory} />;
       case 'reports':
         return <ReportsView 
           inventory={inventory} 
