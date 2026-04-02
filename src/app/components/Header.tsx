@@ -29,6 +29,9 @@ export function Header({ onLogout, userRole, userName = 'User', profilePicture, 
     return time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
   };
 
+  // Hide sync status for Administrator and Health Officer roles (they don't have branch-specific inventory)
+  const shouldShowSync = userRole !== 'Administrator' && userRole !== 'Health Officer';
+
   return (
     <header className="bg-white border-b border-gray-200 px-8 py-4 flex items-center justify-between shadow-sm">
       {/* Date Display */}
@@ -39,33 +42,35 @@ export function Header({ onLogout, userRole, userName = 'User', profilePicture, 
         </div>
         
         {/* Live Sync Status */}
-        <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-50 border border-gray-200">
-          {isSyncing ? (
-            <>
-              <Cloud className="w-4 h-4 text-blue-500 animate-pulse" />
-              <div className="text-xs">
-                <p className="text-gray-700 font-medium">Syncing...</p>
-                <p className="text-gray-500">Saving changes</p>
-              </div>
-            </>
-          ) : lastSyncTime ? (
-            <>
-              <CheckCircle2 className="w-4 h-4 text-[#9867C5]" />
-              <div className="text-xs">
-                <p className="text-gray-700 font-medium">Cloud Synced</p>
-                <p className="text-gray-500">{formatSyncTime(lastSyncTime)}</p>
-              </div>
-            </>
-          ) : (
-            <>
-              <CloudOff className="w-4 h-4 text-gray-400" />
-              <div className="text-xs">
-                <p className="text-gray-700 font-medium">Not Synced</p>
-                <p className="text-gray-500">Waiting for data</p>
-              </div>
-            </>
-          )}
-        </div>
+        {shouldShowSync && (
+          <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-50 border border-gray-200">
+            {isSyncing ? (
+              <>
+                <Cloud className="w-4 h-4 text-blue-500 animate-pulse" />
+                <div className="text-xs">
+                  <p className="text-gray-700 font-medium">Syncing...</p>
+                  <p className="text-gray-500">Saving changes</p>
+                </div>
+              </>
+            ) : lastSyncTime ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-[#9867C5]" />
+                <div className="text-xs">
+                  <p className="text-gray-700 font-medium">Cloud Synced</p>
+                  <p className="text-gray-500">{formatSyncTime(lastSyncTime)}</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <CloudOff className="w-4 h-4 text-gray-400" />
+                <div className="text-xs">
+                  <p className="text-gray-700 font-medium">Not Synced</p>
+                  <p className="text-gray-500">Waiting for data</p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       {/* User Profile & Logout */}

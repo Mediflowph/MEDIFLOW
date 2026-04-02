@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Plus, PackagePlus, Search, ChevronDown } from 'lucide-react';
+import { Plus, PackagePlus, Search, ChevronDown, Calendar } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
 import { Label } from '@/app/components/ui/label';
@@ -408,6 +408,7 @@ export function ReceiveMedicationsView({ onAddStock, existingDrugs = [], invento
                   onChange={(e) => handleChange('dateReceived', e.target.value)}
                   required
                   className="border-gray-300"
+                  style={{ colorScheme: 'light' }}
                 />
               </div>
 
@@ -437,6 +438,7 @@ export function ReceiveMedicationsView({ onAddStock, existingDrugs = [], invento
                   onChange={(e) => handleChange('expirationDate', e.target.value)}
                   required
                   className="border-gray-300"
+                  style={{ colorScheme: 'light' }}
                 />
               </div>
 

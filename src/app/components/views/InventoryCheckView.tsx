@@ -7,6 +7,7 @@ import { InventoryBatch } from '@/app/types/inventory';
 interface InventoryCheckViewProps {
   inventory: InventoryBatch[];
   onClearInventory?: () => void;
+  userRole?: string;
 }
 
 interface PhysicalCount {
@@ -15,7 +16,7 @@ interface PhysicalCount {
   remarks: string;
 }
 
-export function InventoryCheckView({ inventory, onClearInventory }: InventoryCheckViewProps) {
+export function InventoryCheckView({ inventory, onClearInventory, userRole }: InventoryCheckViewProps) {
   const [physicalCounts, setPhysicalCounts] = useState<Record<string, PhysicalCount>>({});
   const [showDiscrepanciesOnly, setShowDiscrepanciesOnly] = useState(false);
 
@@ -134,7 +135,7 @@ export function InventoryCheckView({ inventory, onClearInventory }: InventoryChe
           <span className="text-sm text-gray-700">Show discrepancies only</span>
         </label>
 
-        {onClearInventory && (
+        {onClearInventory && userRole === 'admin' && (
           <button
             onClick={() => {
               if (window.confirm('⚠️ DEV TOOL\n\nThis will permanently delete ALL inventory data for this branch from the database.\n\nAre you sure?')) {

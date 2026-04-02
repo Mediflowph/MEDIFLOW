@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/ca
 import { InventoryBatch } from '@/app/types/inventory';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
 import { isLowStock } from '@/app/utils/reorderPoint';
+import { queuedFetch } from '@/app/utils/fetchQueue';
 
 interface HomeViewProps {
   inventory: InventoryBatch[];
@@ -56,9 +57,11 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
     if (!userToken || (userRole !== 'Administrator' && userRole !== 'Health Officer')) return;
     try {
       setIsLoadingUtilization(true);
-      const response = await fetch(
+      // 3-second delay to let other components load first and avoid overwhelming the Edge Function
+      await new Promise(r => setTimeout(r, 3000));
+      const response = await queuedFetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/all-branches`,
-        { headers: { 'X-User-Token': userToken, 'Authorization': `Bearer ${publicAnonKey}` } }
+        { headers: { 'X-User-Token': userToken, 'Authorization': `Bearer ${publicAnonKey}` }, timeoutMs: 90000 }
       );
       if (!response.ok) throw new Error('Failed to fetch branch data');
       const allInventories = await response.json();
@@ -126,8 +129,6 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
 
       setTopUtilizedDrugs(drugUtilization);
       setAdminInventory(allInventoryItems);
-    } catch (error) {
-      console.error('❌ [HomeView] Error fetching top utilized drugs:', error);
     } finally {
       setIsLoadingUtilization(false);
     }

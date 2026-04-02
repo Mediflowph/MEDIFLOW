@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ShieldCheck, Pill, Lock, Mail, User, AlertCircle, UserPlus, ArrowRight, Building, Eye, EyeOff, KeyRound } from 'lucide-react';
+import { Mail, Lock, User, Eye, EyeOff, Pill, Building2, ArrowLeft, UserPlus } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '@/app/utils/supabase';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
 import { toast } from 'sonner';
+import { AlertCircle } from 'lucide-react';
 
 /**
  * PRE-CREATED ADMIN ACCOUNTS:
@@ -141,26 +142,28 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
         });
 
         if (authError) {
-          // Check if it's an invalid credentials error that might be due to pending approval
-          if (authError.message.includes('Invalid') || authError.message.includes('invalid')) {
-            setError('Invalid email or password. If you recently registered, your account may still be pending approval.');
-          } else {
-            throw authError;
-          }
+          setError('Invalid email or password.');
           setIsLoading(false);
           return;
         }
         
-        console.log('🔍 Login successful, checking approval status...');
+        console.log('🔍 Login successful...');
         console.log('User metadata:', data.user?.user_metadata);
         
-        // Check if user is approved (for Pharmacy Staff)
         const userMetadata = data.user?.user_metadata;
         const userRole = userMetadata?.role || '';
-        const isApproved = userMetadata?.approved;
+        const isApproved = userMetadata?.approved !== false;
         
         console.log('Role:', userRole);
-        console.log('Approved status:', isApproved);
+        console.log('Approved:', isApproved);
+        
+        // Check if account is approved (only staff accounts require approval)
+        if (userRole === 'Pharmacy Staff' && !isApproved) {
+          setError('Your account is pending administrator approval. Please wait for approval before logging in.');
+          setIsLoading(false);
+          await supabase.auth.signOut();
+          return;
+        }
         
         // Check if branch selection is required (not for Admins and Health Officers)
         const requiresBranch = userRole !== 'Administrator' && userRole !== 'Health Officer';
@@ -172,21 +175,7 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
           return;
         }
         
-        // Staff accounts must be approved
-        if (userRole === 'Pharmacy Staff' && isApproved === false) {
-          // User is not approved yet
-          console.log('⛔ User not approved, blocking access');
-          await supabase.auth.signOut();
-          toast.error('Account Pending Approval', {
-            description: 'Your account has been created but is awaiting administrator approval. Please contact your system administrator.',
-            duration: 6000
-          });
-          setError('Your account is pending administrator approval. You will receive access once approved.');
-          setIsLoading(false);
-          return;
-        }
-        
-        console.log('✅ User approved, proceeding with login');
+        console.log('✅ Proceeding with login');
         
         // For admins and health officers, use a special "All Branches" designation
         const selectedBranch = requiresBranch 
@@ -240,31 +229,21 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'Signup failed');
 
-        // Check if account requires approval
         if (result.requiresApproval) {
-          toast.success('Registration Submitted!', { 
-            description: 'Your account has been created and is awaiting administrator approval. You will be able to sign in once approved.' 
+          toast.success('Account created!', { 
+            description: 'Your account is pending administrator approval. You will be able to login once approved.',
+            duration: 6000
           });
-          setIsInLogin(true);
-          // Clear form fields
-          setEmail('');
-          setPassword('');
-          setName('');
         } else {
-          // Automatically sign in after successful registration (for non-staff users)
-          const { data, error: authError } = await supabase.auth.signInWithPassword({
-            email,
-            password,
+          toast.success('Account created!', { 
+            description: `Welcome to MediFlow, ${name}! Please sign in with your new credentials.` 
           });
-
-          if (authError) {
-            toast.success('Account created!', { description: 'Please sign in with your new credentials.' });
-            setIsInLogin(true);
-          } else {
-            toast.success('Account created!', { description: `Welcome to MediFlow, ${name}! Please sign in.` });
-            setIsInLogin(true);
-          }
         }
+        setIsInLogin(true);
+        // Clear form fields
+        setEmail('');
+        setPassword('');
+        setName('');
       }
     } catch (err: any) {
       console.error('Auth error:', err);
@@ -346,13 +325,13 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
                 className="mb-6 p-5 bg-[#9867C5]/5 border border-[#9867C5]/20 rounded-2xl"
               >
                 <div className="flex items-center gap-2 mb-3">
-                  <KeyRound className="w-5 h-5 text-[#9867C5]" />
+                  <Lock className="w-5 h-5 text-[#9867C5]" />
                   <h3 className="font-semibold text-gray-800">Reset Password</h3>
                 </div>
                 {resetSent ? (
                   <div className="text-center py-3">
                     <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                      <ShieldCheck className="w-6 h-6 text-green-600" />
+                      <AlertCircle className="w-6 h-6 text-green-600" />
                     </div>
                     <p className="text-sm text-gray-700 font-medium">Reset email sent!</p>
                     <p className="text-xs text-gray-500 mt-1">Check your inbox at <strong>{forgotEmail}</strong></p>
@@ -453,15 +432,24 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
                       <option disabled>Administrator</option>
                       <option disabled>Health Officer</option>
                     </select>
-                    {role === 'Pharmacy Staff' && (
-                      <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mt-2">
-                        <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
-                        <p className="text-xs text-amber-800">
+
+                  </div>
+                  
+                  {/* Admin Approval Message for Pharmacy Staff */}
+                  {role === 'Pharmacy Staff' && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl"
+                    >
+                      <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-amber-800 mt-1">
                           <strong>Admin Approval Required:</strong> Your account will be created but you must wait for administrator approval before you can sign in to the system.
                         </p>
                       </div>
-                    )}
-                  </div>
+                    </motion.div>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
@@ -480,7 +468,7 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
                     <span className="text-xs text-gray-500 italic">Optional for Admins</span>
                   </div>
                   <div className="relative">
-                    <Building className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 z-10" />
+                    <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 z-10" />
                     <select
                       value={selectedBranchId}
                       onChange={(e) => setSelectedBranchId(e.target.value)}
@@ -564,7 +552,7 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 <>
-                  {isLogin ? <ShieldCheck className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
+                  {isLogin ? <AlertCircle className="w-5 h-5" /> : <UserPlus className="w-5 h-5" />}
                   {isLogin ? 'Sign In to System' : 'Create Account'}
                 </>
               )}
@@ -577,7 +565,7 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
                 onClick={() => { setShowForgotPassword(!showForgotPassword); setResetSent(false); }}
                 className="w-full text-center text-sm text-[#9867C5] hover:text-[#9867C5]/80 transition-colors flex items-center justify-center gap-1.5 mt-1"
               >
-                <KeyRound className="w-3.5 h-3.5" />
+                <Lock className="w-3.5 h-3.5" />
                 Forgot your password?
               </button>
             )}
@@ -586,7 +574,7 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
         
         <div className="bg-[#fff9c4] px-8 py-3 flex items-center justify-between gap-2">
           <span className="text-[10px] font-bold text-[#f57f17] uppercase tracking-wider">Official DOH Inventory Portal</span>
-          <ArrowRight className="w-3 h-3 text-[#f57f17]" />
+          <ArrowLeft className="w-3 h-3 text-[#f57f17]" />
         </div>
       </motion.div>
     </div>

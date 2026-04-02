@@ -1,22 +1,13 @@
 import { useState, useEffect } from 'react';
-import { authManager } from '@/app/utils/authManager';
 import type { Branch, AuditLog } from '@/app/utils/kvStore';
-import { Shield, RefreshCw, UserCheck, UserX, Clock, List, Building, Plus, Database, Users, Search, AlertTriangle, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
+import { Shield, RefreshCw, UserCheck, Clock, List, Building, Plus, Database, Users, Search, AlertTriangle, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
 import { toast } from 'sonner';
+import { supabase } from '@/app/utils/supabase';
 
 interface AdminDashboardViewProps {
   userToken: string;
-}
-
-interface PendingUser {
-  id: string;
-  email: string;
-  name: string;
-  role: string;
-  branch: string;
-  createdAt: string;
 }
 
 interface AllUser {
@@ -30,18 +21,13 @@ interface AllUser {
 }
 
 export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
-  const [activeTab, setActiveTab] = useState<'approvals' | 'logs' | 'branches' | 'users'>('approvals');
-  const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
+  const [activeTab, setActiveTab] = useState<'logs' | 'branches' | 'users'>('logs');
   const [allUsers, setAllUsers] = useState<AllUser[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [isPendingLoading, setIsPendingLoading] = useState(false);
   const [isLogsLoading, setIsLogsLoading] = useState(false);
   const [isBranchesLoading, setIsBranchesLoading] = useState(false);
   const [isAllUsersLoading, setIsAllUsersLoading] = useState(false);
-  const [approvingUserId, setApprovingUserId] = useState<string | null>(null);
-  const [rejectingUserId, setRejectingUserId] = useState<string | null>(null);
-  const [currentToken, setCurrentToken] = useState(userToken);
   
   const [newBranchName, setNewBranchName] = useState('');
   const [isCreatingBranch, setIsCreatingBranch] = useState(false);
@@ -52,43 +38,15 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
   const [isCreatingMissingBranches, setIsCreatingMissingBranches] = useState(false);
   const [diagnosticData, setDiagnosticData] = useState<any>(null);
 
-  // Function to get a fresh token using centralized auth manager
+  // Use the prop token directly instead of authManager
   const getFreshToken = async (): Promise<string> => {
-    const token = await authManager.getToken();
-    if (!token) {
-      throw new Error('Failed to get authentication token');
+    // Get fresh token from Supabase session to avoid stale tokens
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session) {
+      console.error('Failed to get fresh token:', error);
+      return userToken; // Fallback to prop token
     }
-    setCurrentToken(token);
-    return token;
-  };
-
-  const fetchPendingUsers = async () => {
-    try {
-      setIsPendingLoading(true);
-      const token = await getFreshToken();
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/pending-users`,
-        {
-          headers: {
-            'X-User-Token': token,
-            'Authorization': `Bearer ${publicAnonKey}`
-          }
-        }
-      );
-
-      if (!response.ok) {
-        setPendingUsers([]);
-        return;
-      }
-
-      const pendingUsersData = await response.json();
-      setPendingUsers(Array.isArray(pendingUsersData) ? pendingUsersData : []);
-    } catch (error) {
-      console.error('Error fetching pending users:', error);
-      setPendingUsers([]);
-    } finally {
-      setIsPendingLoading(false);
-    }
+    return session.access_token;
   };
 
   const fetchAllUsers = async () => {
@@ -189,62 +147,11 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
 
   useEffect(() => {
     if (userToken) {
-      fetchPendingUsers();
       fetchAuditLogs();
       fetchBranches();
       fetchAllUsers();
     }
   }, [userToken]);
-
-  const handleApproveUser = async (userId: string) => {
-    if (!window.confirm('Approve this user?')) return;
-    try {
-      setApprovingUserId(userId);
-      const token = await getFreshToken();
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/approve-user/${userId}`,
-        {
-          method: 'POST',
-          headers: {
-            'X-User-Token': token,
-            'Authorization': `Bearer ${publicAnonKey}`
-          }
-        }
-      );
-      if (!response.ok) throw new Error('Failed to approve user');
-      toast.success('User Approved');
-      await fetchPendingUsers();
-    } catch (error) {
-      toast.error('Approval Failed');
-    } finally {
-      setApprovingUserId(null);
-    }
-  };
-
-  const handleRejectUser = async (userId: string) => {
-    if (!window.confirm('Reject and delete this user?')) return;
-    try {
-      setRejectingUserId(userId);
-      const token = await getFreshToken();
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/reject-user/${userId}`,
-        {
-          method: 'POST',
-          headers: {
-            'X-User-Token': token,
-            'Authorization': `Bearer ${publicAnonKey}`
-          }
-        }
-      );
-      if (!response.ok) throw new Error('Failed to reject user');
-      toast.success('User Rejected');
-      await fetchPendingUsers();
-    } catch (error) {
-      toast.error('Rejection Failed');
-    } finally {
-      setRejectingUserId(null);
-    }
-  };
 
   const handleCreateBranch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -610,16 +517,7 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
         </div>
         <div className="flex gap-3">
           <button
-            onClick={handleMigrateToSQL}
-            disabled={isMigrating}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Database className="w-4 h-4" />
-            {isMigrating ? 'Migrating...' : 'Migrate to SQL'}
-          </button>
-          <button
             onClick={() => {
-              fetchPendingUsers();
               fetchAuditLogs();
               fetchBranches();
               fetchAllUsers();
@@ -633,15 +531,6 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
       </div>
 
       <div className="flex border-b border-gray-200 overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('approvals')}
-          className={`px-6 py-3 font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'approvals' ? 'border-[#9867C5] text-[#9867C5]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-        >
-          <div className="flex items-center gap-2">
-            <UserCheck className="w-4 h-4" />
-            Pending Approvals ({pendingUsers.length})
-          </div>
-        </button>
         <button
           onClick={() => setActiveTab('logs')}
           className={`px-6 py-3 font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'logs' ? 'border-[#9867C5] text-[#9867C5]' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
@@ -667,47 +556,14 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
           <div className="flex items-center gap-2">
             <List className="w-4 h-4" />
             All Users
+            {allUsers.filter(u => !u.approved && u.role === 'Pharmacy Staff').length > 0 && (
+              <span className="px-2 py-0.5 text-xs bg-amber-500 text-white rounded-full">
+                {allUsers.filter(u => !u.approved && u.role === 'Pharmacy Staff').length}
+              </span>
+            )}
           </div>
         </button>
       </div>
-
-      {activeTab === 'approvals' && (
-        <Card className="border-none shadow-md">
-          <CardHeader className="border-b bg-gradient-to-r from-[#9867C5]/10 to-[#9867C5]/5">
-            <CardTitle className="text-gray-800 flex items-center gap-2">
-              <UserCheck className="w-5 h-5 text-[#9867C5]" />
-              User Registration Requests
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-6">
-            {isPendingLoading ? (
-              <div className="text-center py-12"><RefreshCw className="w-8 h-8 animate-spin mx-auto text-gray-400" /></div>
-            ) : pendingUsers.length === 0 ? (
-              <div className="text-center py-12 text-gray-500">No pending registrations found</div>
-            ) : (
-              <div className="space-y-4">
-                {pendingUsers.map(user => (
-                  <div key={user.id} className="p-4 bg-gray-50 rounded-lg flex items-center justify-between border-l-4 border-amber-500">
-                    <div>
-                      <h4 className="font-semibold text-gray-800">{user.name}</h4>
-                      <p className="text-xs text-gray-500">{user.email} • {user.role}</p>
-                      <p className="text-xs text-gray-500">Requested Branch: {user.branch}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => handleApproveUser(user.id)} disabled={approvingUserId === user.id} className="px-3 py-1.5 bg-green-500 text-white rounded text-sm font-medium hover:bg-green-600">
-                        {approvingUserId === user.id ? '...' : 'Approve'}
-                      </button>
-                      <button onClick={() => handleRejectUser(user.id)} disabled={rejectingUserId === user.id} className="px-3 py-1.5 bg-red-500 text-white rounded text-sm font-medium hover:bg-red-600">
-                        {rejectingUserId === user.id ? '...' : 'Reject'}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       {activeTab === 'logs' && (
         <Card className="border-none shadow-md">
@@ -1047,56 +903,137 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
       )}
 
       {activeTab === 'users' && (
-        <Card className="border-none shadow-md">
-          <CardHeader className="border-b bg-gradient-to-r from-[#9867C5]/10 to-[#9867C5]/5">
-            <CardTitle className="text-gray-800 flex items-center gap-2">
-              <List className="w-5 h-5 text-[#9867C5]" />
-              All Registered Users
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="pt-6">
-            {isAllUsersLoading ? (
-              <div className="text-center py-12"><RefreshCw className="w-8 h-8 animate-spin mx-auto text-gray-400" /></div>
-            ) : allUsers.length === 0 ? (
-              <div className="text-center py-12 text-gray-500">No users registered.</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {allUsers.map(user => (
-                  <div key={user.id} className="p-4 bg-gray-50 rounded-xl border border-gray-100 flex items-center justify-between group">
-                    <div className="flex items-center gap-3">
+        <div className="space-y-6">
+          {/* Pending Users Section */}
+          {allUsers.filter(u => !u.approved && u.role === 'Pharmacy Staff').length > 0 && (
+            <Card className="border-none shadow-md border-l-4 border-l-amber-500">
+              <CardHeader className="border-b bg-gradient-to-r from-amber-50 to-amber-50/50">
+                <CardTitle className="text-gray-800 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-amber-600" />
+                  Pending Staff Approvals ({allUsers.filter(u => !u.approved && u.role === 'Pharmacy Staff').length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6">
+                <div className="space-y-3">
+                  {allUsers.filter(u => !u.approved && u.role === 'Pharmacy Staff').map(user => (
+                    <div key={user.id} className="p-4 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm">
+                          <Clock className="w-5 h-5 text-amber-600" />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-800">{user.name}</p>
+                          <p className="text-xs text-gray-600">{user.email}</p>
+                          <p className="text-xs text-gray-500">Role: {user.role}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={async () => {
+                            try {
+                              const token = await getFreshToken();
+                              const response = await fetch(
+                                `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/approve-user`,
+                                {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-User-Token': token,
+                                    'Authorization': `Bearer ${publicAnonKey}`
+                                  },
+                                  body: JSON.stringify({ userId: user.id })
+                                }
+                              );
+                              if (response.ok) {
+                                toast.success('User Approved', { description: `${user.name} can now login.` });
+                                fetchAllUsers();
+                              } else {
+                                toast.error('Failed to approve user');
+                              }
+                            } catch (error) {
+                              console.error('Error approving user:', error);
+                              toast.error('Error approving user');
+                            }
+                          }}
+                          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg transition-colors flex items-center gap-2"
+                        >
+                          <CheckCircle2 className="w-4 h-4" />
+                          Approve
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`Reject ${user.name}'s account? This will permanently delete their account.`)) return;
+                            try {
+                              const token = await getFreshToken();
+                              const response = await fetch(
+                                `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/reject-user`,
+                                {
+                                  method: 'POST',
+                                  headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-User-Token': token,
+                                    'Authorization': `Bearer ${publicAnonKey}`
+                                  },
+                                  body: JSON.stringify({ userId: user.id })
+                                }
+                              );
+                              if (response.ok) {
+                                toast.success('User Rejected', { description: `${user.name}'s account has been deleted.` });
+                                fetchAllUsers();
+                              } else {
+                                toast.error('Failed to reject user');
+                              }
+                            } catch (error) {
+                              console.error('Error rejecting user:', error);
+                              toast.error('Error rejecting user');
+                            }
+                          }}
+                          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded-lg transition-colors flex items-center gap-2"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* All Users Section */}
+          <Card className="border-none shadow-md">
+            <CardHeader className="border-b bg-gradient-to-r from-[#9867C5]/10 to-[#9867C5]/5">
+              <CardTitle className="text-gray-800 flex items-center gap-2">
+                <List className="w-5 h-5 text-[#9867C5]" />
+                All Registered Users ({allUsers.filter(u => u.approved).length} approved)
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6">
+              {isAllUsersLoading ? (
+                <div className="text-center py-12"><RefreshCw className="w-8 h-8 animate-spin mx-auto text-gray-400" /></div>
+              ) : allUsers.filter(u => u.approved).length === 0 ? (
+                <div className="text-center py-12 text-gray-500">No approved users.</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {allUsers.filter(u => u.approved).map(user => (
+                    <div key={user.id} className="p-4 bg-gray-50 rounded-xl border border-gray-100 flex items-center gap-3">
                       <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-sm">
                         <UserCheck className="w-5 h-5 text-[#9867C5]" />
                       </div>
                       <div>
                         <p className="font-semibold text-gray-800">{user.name}</p>
-                        <p className="text-[10px] text-gray-400 font-mono">ID: {user.id}</p>
+                        <p className="text-[10px] text-gray-500">{user.email}</p>
                         <p className="text-[10px] text-gray-400 font-mono">Role: {user.role}</p>
                         <p className="text-[10px] text-gray-400 font-mono">Branch: {user.branchName || 'N/A'}</p>
                       </div>
                     </div>
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button 
-                        onClick={() => handleApproveUser(user.id)}
-                        className="p-2 text-[#9867C5] hover:bg-[#9867C5]/10 rounded-lg"
-                        title="Approve User"
-                        disabled={user.approved}
-                      >
-                        <UserCheck className="w-4 h-4" />
-                      </button>
-                      <button 
-                        onClick={() => handleRejectUser(user.id)}
-                        className="p-2 text-red-400 hover:bg-red-50 rounded-lg"
-                        title="Delete User"
-                      >
-                        <UserX className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );
