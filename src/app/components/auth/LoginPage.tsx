@@ -571,11 +571,6 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
             )}
           </form>
         </div>
-        
-        <div className="bg-[#fff9c4] px-8 py-3 flex items-center justify-between gap-2">
-          <span className="text-[10px] font-bold text-[#f57f17] uppercase tracking-wider">Official DOH Inventory Portal</span>
-          <ArrowLeft className="w-3 h-3 text-[#f57f17]" />
-        </div>
       </motion.div>
     </div>
   );
