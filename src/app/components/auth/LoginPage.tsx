@@ -485,12 +485,6 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
                       ))}
                     </select>
                   </div>
-                  <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                    <AlertCircle className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
-                    <p className="text-xs text-blue-800">
-                      <strong>Admin & Health Officer:</strong> You can login without selecting a branch. Branch selection is required only for Pharmacy Staff.
-                    </p>
-                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
