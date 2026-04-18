@@ -7,6 +7,7 @@ import { logTransaction } from '@/app/utils/transactionLog';
 import { LoginPage } from '@/app/components/auth/LoginPage';
 import { ResetPasswordPage } from '@/app/components/auth/ResetPasswordPage';
 import { ExpiredLinkPage } from '@/app/components/auth/ExpiredLinkPage';
+import { MaintenanceScreen } from '@/app/components/MaintenanceScreen';
 import { Sidebar } from '@/app/components/Sidebar';
 import { Header } from '@/app/components/Header';
 import { HomeView } from '@/app/components/views/HomeView';
@@ -20,6 +21,7 @@ import { AlertsView } from '@/app/components/views/AlertsView';
 import { AdminDashboardView } from '@/app/components/views/AdminDashboardView';
 import { BranchInventoryManagementView } from '@/app/components/views/BranchInventoryManagementView';
 import { ProfileView } from '@/app/components/views/ProfileView';
+
 
 export interface InventoryBatch {
   id: string;
@@ -214,6 +216,7 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [lastManualSync, setLastManualSync] = useState<number>(0);
+  const [isMaintenanceMode, setIsMaintenanceMode] = useState(false);
   // Detect password-recovery flow immediately from the URL hash so we never
   // miss the Supabase PASSWORD_RECOVERY event (which fires during client init,
   // before the onAuthStateChange listener is registered in the useEffect).
@@ -1058,6 +1061,10 @@ export default function App() {
         <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin" />
       </div>
     );
+  }
+
+  if (isMaintenanceMode) {
+    return <MaintenanceScreen />;
   }
 
   if (isPasswordRecovery) {
