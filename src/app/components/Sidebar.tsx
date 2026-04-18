@@ -33,20 +33,25 @@ const getMenuItems = (userRole: string) => {
   // Add Branch Management for Administrator and Health Officer
   if (userRole === 'Administrator' || userRole === 'Health Officer') {
     baseItems.push(
-      { id: 'branch-management', label: 'Branch Inventory', icon: Building }
+      { id: 'branch-management', label: 'All Inventories', icon: Building },
     );
   }
 
   // Common items for all roles
-  baseItems.push(
-    { id: 'home', label: 'Home', icon: Home }
-  );
+  if (userRole === 'Administrator' || userRole === 'Health Officer') {
+    baseItems.push(
+      { id: 'home', label: 'Drug Utilization', icon: Home}
+    );
+  } else {
+    baseItems.push(
+      { id: 'home', label: 'Home', icon: Home}
+    );
+  }
 
   // Add role-specific operational tabs
   if (userRole === 'Administrator' || userRole === 'Health Officer') {
     // Admin and HO don't need receive/dispense - they monitor branches
     baseItems.push(
-      { id: 'stock', label: 'Stock Overview', icon: Package },
       { id: 'reports', label: 'Make Report', icon: FileText },
       { id: 'alerts', label: 'Alerts & Notifications', icon: Bell }
     );
@@ -65,7 +70,7 @@ const getMenuItems = (userRole: string) => {
 
   // Add Profile/Branch Profile Settings for all
   if (userRole === 'Administrator') {
-    baseItems.push({ id: 'profile', label: 'Branch Profile', icon: User });
+    baseItems.push({ id: 'profile', label: 'Profile', icon: User });
   } else {
     baseItems.push({ id: 'profile', label: 'Profile Settings', icon: User });
   }

@@ -32,7 +32,7 @@ import {
 } from "@/../utils/supabase/info";
 import { toast } from "sonner";
 import { generateExcelReportWithBranchInfo } from "@/app/utils/exportUtils";
-import { supabase } from "@/app/utils/supabase";
+// supabase import removed — use userToken prop instead
 
 interface BranchData {
   userId: string;
@@ -60,22 +60,9 @@ export function BranchInventoryManagementView({
   const [isAddingNew, setIsAddingNew] = useState<{ [key: string]: boolean }>({});
   const [newBatchForm, setNewBatchForm] = useState<{ [key: string]: Omit<InventoryBatch, "id"> }>({});
   const [generatingReportForBranch, setGeneratingReportForBranch] = useState<string | null>(null);
-  const [currentToken, setCurrentToken] = useState(userToken);
 
-  // Get fresh token
-  const getFreshToken = async (): Promise<string | null> => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token) {
-        setCurrentToken(session.access_token);
-        return session.access_token;
-      }
-      return null;
-    } catch (error) {
-      console.error("Error getting fresh token:", error);
-      return null;
-    }
-  };
+  // Use the prop token directly — App.tsx keeps it fresh via onAuthStateChange
+  const getFreshToken = async (): Promise<string | null> => userToken;
 
   const fetchAllBranches = async () => {
     try {
@@ -158,7 +145,13 @@ export function BranchInventoryManagementView({
             unitCost: inv.unit_cost || inv.unit_price || inv.unitCost || 0,
             quantityDispensed: inv.quantity_dispensed || inv.quantityDispensed || 0,
             expirationDate: inv.expiration_date || inv.expiry_date || inv.expirationDate || '',
-            remarks: inv.remarks || ''
+            remarks: inv.remarks || '',
+            category: inv.category || (() => {
+              const prog = (inv.program || '').toLowerCase();
+              if (prog.includes('ereid') || prog.includes('tb') || prog.includes('antimicro')) return 'Antimicrobial';
+              if (prog.includes('nip') || prog.includes('immuniz')) return 'Non-antimicrobial';
+              return 'Others';
+            })(),
           }));
 
           return {
@@ -495,6 +488,7 @@ export function BranchInventoryManagementView({
     quantityDispensed: 0,
     expirationDate: "",
     remarks: "",
+    category: "Others",
   });
 
   const getTotalStats = () => {
@@ -830,7 +824,6 @@ export function BranchInventoryManagementView({
           </div>
           <div>
             <h2 className="text-2xl font-bold text-gray-800">Branch Management</h2>
-            <p className="text-gray-600 font-medium">Multi-Branch Inventory Control & Stock Delivery</p>
           </div>
         </div>
         <div className="flex gap-2">
@@ -1274,211 +1267,102 @@ export function BranchInventoryManagementView({
 
                   {/* Inventory Table */}
                   <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-gray-100">
+                    <table className="w-full text-xs border-collapse">
+                      <thead className="bg-gray-100 sticky top-0">
                         <tr>
-                          <th className="px-4 py-3 text-left text-xs text-gray-600">
-                            Drug Name
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs text-gray-600">
-                            Program
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs text-gray-600">
-                            Batch #
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs text-gray-600">
-                            Beginning
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs text-gray-600">
-                            Received
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs text-gray-600">
-                            Dispensed
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs text-gray-600">
-                            Stock
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs text-gray-600">
-                            Expiry
-                          </th>
-                          <th className="px-4 py-3 text-left text-xs text-gray-600">
-                            Actions
-                          </th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">No.</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Name & Description</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Program</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Category</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Beg. Inventory</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Batch/Lot No.</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Unit</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Qty Received</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Unit Cost</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Total Cost</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Dispensed</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Stock on Hand</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Utilization %</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Expiry Date</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Expired</th>
+                          <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
                         {branch.inventory.length === 0 ? (
                           <tr>
-                            <td
-                              colSpan={9}
-                              className="px-4 py-8 text-center text-gray-500"
-                            >
+                            <td colSpan={16} className="border border-gray-300 px-4 py-8 text-center text-gray-500">
                               <Package className="w-8 h-8 mx-auto mb-2 opacity-50" />
                               No inventory items
                             </td>
                           </tr>
                         ) : (
-                          branch.inventory.map((batch) => {
-                            const isEditing =
-                              editingBatch === batch.id;
-                            const stock =
-                              batch.beginningInventory +
-                              batch.quantityReceived -
-                              batch.quantityDispensed;
+                          branch.inventory.map((batch, batchIndex) => {
+                            const isEditing = editingBatch === batch.id;
+                            const stock = batch.beginningInventory + batch.quantityReceived - batch.quantityDispensed;
+                            const totalCost = batch.quantityReceived * batch.unitCost;
+                            const totalSupplyItem = batch.beginningInventory + batch.quantityReceived;
+                            const utilization = totalSupplyItem > 0 ? ((batch.quantityDispensed / totalSupplyItem) * 100).toFixed(1) : '0.0';
+                            const isItemExpired = new Date(batch.expirationDate) < new Date();
+                            const cat = batch.category || 'Others';
+                            const formatPeso = (amount: number) => `₱${amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
                             if (isEditing) {
                               return (
-                                <tr
-                                  key={batch.id}
-                                  className="border-t border-gray-200 bg-blue-50"
-                                >
-                                  <td className="px-4 py-3">
-                                    <Input
-                                      value={
-                                        editFormData.drugName ||
-                                        ""
-                                      }
-                                      onChange={(e) =>
-                                        setEditFormData({
-                                          ...editFormData,
-                                          drugName:
-                                            e.target.value,
-                                        })
-                                      }
-                                      className="h-8"
-                                    />
+                                <tr key={batch.id} className="border-t border-gray-200 bg-blue-50">
+                                  <td className="border border-gray-300 px-3 py-2 text-gray-700">{batchIndex + 1}</td>
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    <Input value={editFormData.drugName || ""} onChange={(e) => setEditFormData({ ...editFormData, drugName: e.target.value })} className="h-8" />
                                   </td>
-                                  <td className="px-4 py-3">
-                                    <Input
-                                      value={
-                                        editFormData.program ||
-                                        ""
-                                      }
-                                      onChange={(e) =>
-                                        setEditFormData({
-                                          ...editFormData,
-                                          program:
-                                            e.target.value,
-                                        })
-                                      }
-                                      className="h-8"
-                                    />
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    <Input value={editFormData.program || ""} onChange={(e) => setEditFormData({ ...editFormData, program: e.target.value })} className="h-8" />
                                   </td>
-                                  <td className="px-4 py-3">
-                                    <Input
-                                      value={
-                                        editFormData.batchNumber ||
-                                        ""
-                                      }
-                                      onChange={(e) =>
-                                        setEditFormData({
-                                          ...editFormData,
-                                          batchNumber:
-                                            e.target.value,
-                                        })
-                                      }
-                                      className="h-8"
-                                    />
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    <select value={editFormData.category || 'Others'} onChange={(e) => setEditFormData({ ...editFormData, category: e.target.value })} className="h-8 px-2 border border-gray-300 rounded text-xs w-full">
+                                      <option value="Antimicrobial">Antimicrobial</option>
+                                      <option value="Non-antimicrobial">Non-antimicrobial</option>
+                                      <option value="Others">Others</option>
+                                    </select>
                                   </td>
-                                  <td className="px-4 py-3">
-                                    <Input
-                                      type="number"
-                                      value={
-                                        editFormData.beginningInventory ||
-                                        0
-                                      }
-                                      onChange={(e) =>
-                                        setEditFormData({
-                                          ...editFormData,
-                                          beginningInventory:
-                                            parseInt(
-                                              e.target.value,
-                                            ) || 0,
-                                        })
-                                      }
-                                      className="h-8 w-20"
-                                    />
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    <Input type="number" value={editFormData.beginningInventory || 0} onChange={(e) => setEditFormData({ ...editFormData, beginningInventory: parseInt(e.target.value) || 0 })} className="h-8 w-20" />
                                   </td>
-                                  <td className="px-4 py-3">
-                                    <Input
-                                      type="number"
-                                      value={
-                                        editFormData.quantityReceived ||
-                                        0
-                                      }
-                                      onChange={(e) =>
-                                        setEditFormData({
-                                          ...editFormData,
-                                          quantityReceived:
-                                            parseInt(
-                                              e.target.value,
-                                            ) || 0,
-                                        })
-                                      }
-                                      className="h-8 w-20"
-                                    />
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    <Input value={editFormData.batchNumber || ""} onChange={(e) => setEditFormData({ ...editFormData, batchNumber: e.target.value })} className="h-8" />
                                   </td>
-                                  <td className="px-4 py-3">
-                                    <Input
-                                      type="number"
-                                      value={
-                                        editFormData.quantityDispensed ||
-                                        0
-                                      }
-                                      onChange={(e) =>
-                                        setEditFormData({
-                                          ...editFormData,
-                                          quantityDispensed:
-                                            parseInt(
-                                              e.target.value,
-                                            ) || 0,
-                                        })
-                                      }
-                                      className="h-8 w-20"
-                                    />
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    <Input value={editFormData.unit || ""} onChange={(e) => setEditFormData({ ...editFormData, unit: e.target.value })} className="h-8 w-16" />
                                   </td>
-                                  <td className="px-4 py-3 text-sm text-gray-500">
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    <Input type="number" value={editFormData.quantityReceived || 0} onChange={(e) => setEditFormData({ ...editFormData, quantityReceived: parseInt(e.target.value) || 0 })} className="h-8 w-20" />
+                                  </td>
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    <Input type="number" step="0.01" value={editFormData.unitCost || 0} onChange={(e) => setEditFormData({ ...editFormData, unitCost: parseFloat(e.target.value) || 0 })} className="h-8 w-20" />
+                                  </td>
+                                  <td className="border border-gray-300 px-3 py-2 text-right text-gray-500">
+                                    {formatPeso((editFormData.quantityReceived || 0) * (editFormData.unitCost || 0))}
+                                  </td>
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    <Input type="number" value={editFormData.quantityDispensed || 0} onChange={(e) => setEditFormData({ ...editFormData, quantityDispensed: parseInt(e.target.value) || 0 })} className="h-8 w-20" />
+                                  </td>
+                                  <td className="border border-gray-300 px-3 py-2 text-right text-gray-500">
                                     {(editFormData.beginningInventory || 0) + (editFormData.quantityReceived || 0) - (editFormData.quantityDispensed || 0)}
                                   </td>
-                                  <td className="px-4 py-3">
-                                    <Input
-                                      type="date"
-                                      value={
-                                        editFormData.expirationDate ||
-                                        ""
-                                      }
-                                      onChange={(e) =>
-                                        setEditFormData({
-                                          ...editFormData,
-                                          expirationDate:
-                                            e.target.value,
-                                        })
-                                      }
-                                      className="h-8"
-                                    />
+                                  <td className="border border-gray-300 px-3 py-2 text-right text-gray-500">
+                                    {(() => { const s = (editFormData.beginningInventory || 0) + (editFormData.quantityReceived || 0); return s > 0 ? (((editFormData.quantityDispensed || 0) / s) * 100).toFixed(1) : '0.0'; })()}%
                                   </td>
-                                  <td className="px-4 py-3">
-                                    <div className="flex gap-2">
-                                      <button
-                                        onClick={() =>
-                                          handleSaveEdit(
-                                            branch.userId,
-                                            branch.branchName,
-                                          )
-                                        }
-                                        className="p-1 text-green-600 hover:bg-green-50 rounded"
-                                      >
-                                        <Save className="w-4 h-4" />
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          setEditingBatch(null);
-                                          setEditFormData({});
-                                        }}
-                                        className="p-1 text-gray-600 hover:bg-gray-50 rounded"
-                                      >
-                                        <X className="w-4 h-4" />
-                                      </button>
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    <Input type="date" value={editFormData.expirationDate || ""} onChange={(e) => setEditFormData({ ...editFormData, expirationDate: e.target.value })} className="h-8" />
+                                  </td>
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    {editFormData.expirationDate && new Date(editFormData.expirationDate) < new Date()
+                                      ? <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">Yes</span>
+                                      : <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">No</span>}
+                                  </td>
+                                  <td className="border border-gray-300 px-3 py-2">
+                                    <div className="flex gap-1">
+                                      <button onClick={() => handleSaveEdit(branch.userId, branch.branchName)} className="p-1 text-green-600 hover:bg-green-50 rounded"><Save className="w-4 h-4" /></button>
+                                      <button onClick={() => { setEditingBatch(null); setEditFormData({}); }} className="p-1 text-gray-600 hover:bg-gray-50 rounded"><X className="w-4 h-4" /></button>
                                     </div>
                                   </td>
                                 </tr>
@@ -1486,47 +1370,46 @@ export function BranchInventoryManagementView({
                             }
 
                             return (
-                              <tr
-                                key={batch.id}
-                                className="border-t border-gray-200 hover:bg-gray-50"
-                              >
-                                <td className="px-4 py-3 text-sm text-gray-800">
-                                  {batch.drugName}
+                              <tr key={batch.id} className="border-t border-gray-200 hover:bg-gray-50">
+                                <td className="border border-gray-300 px-3 py-2 text-gray-700">{batchIndex + 1}</td>
+                                <td className="border border-gray-300 px-3 py-2 text-gray-700">
+                                  <div><p className="font-medium">{batch.drugName}</p><p className="text-xs text-gray-500">{batch.dosage}</p></div>
                                 </td>
-                                <td className="px-4 py-3 text-sm">
-                                  <span className="inline-block px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">
-                                    {batch.program}
-                                  </span>
+                                <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.program}</td>
+                                <td className="border border-gray-300 px-3 py-2">
+                                  <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${cat === 'Antimicrobial' ? 'bg-emerald-100 text-emerald-700' : cat === 'Non-antimicrobial' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>{cat}</span>
                                 </td>
-                                <td className="px-4 py-3 text-sm text-gray-800">
-                                  {batch.batchNumber}
+                                <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{batch.beginningInventory}</td>
+                                <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.batchNumber}</td>
+                                <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.unit}</td>
+                                <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{batch.quantityReceived}</td>
+                                <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{formatPeso(batch.unitCost)}</td>
+                                <td className="border border-gray-300 px-3 py-2 text-right font-medium text-gray-700">{formatPeso(totalCost)}</td>
+                                <td className="border border-gray-300 px-3 py-2 text-right text-blue-600">{batch.quantityDispensed}</td>
+                                <td className="border border-gray-300 px-3 py-2 text-right font-semibold text-[#9867C5]">{stock}</td>
+                                <td className="border border-gray-300 px-3 py-2 text-right text-gray-700">{utilization}%</td>
+                                <td className="border border-gray-300 px-3 py-2 text-gray-700">{batch.expirationDate}</td>
+                                <td className="border border-gray-300 px-3 py-2">
+                                  <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${isItemExpired ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{isItemExpired ? 'Yes' : 'No'}</span>
                                 </td>
-                                <td className="px-4 py-3 text-sm text-gray-800">
-                                  {batch.beginningInventory}
-                                </td>
-                                <td className="px-4 py-3 text-sm text-[#9867C5]">
-                                  +{batch.quantityReceived}
-                                </td>
-                                <td className="px-4 py-3 text-sm text-blue-600">
-                                  -{batch.quantityDispensed}
-                                </td>
-                                <td className="px-4 py-3 text-sm font-semibold text-gray-800">
-                                  {stock}
-                                </td>
-                                <td className="px-4 py-3 text-sm text-gray-800">
-                                  {batch.expirationDate}
-                                </td>
-                                <td className="px-4 py-3">
-                                  <div className="flex gap-2">
+                                <td className="border border-gray-300 px-3 py-2">
+                                  <div className="flex gap-1">
+                                    <button onClick={() => handleEditBatch(batch)} className="p-1 text-blue-600 hover:bg-blue-50 rounded" title="Edit"><Edit className="w-4 h-4" /></button>
                                     <button
-                                      onClick={() =>
-                                        handleEditBatch(batch)
-                                      }
-                                      className="p-1 text-blue-600 hover:bg-blue-50 rounded"
-                                      title="Edit"
-                                    >
-                                      <Edit className="w-4 h-4" />
-                                    </button>
+                                      onClick={async () => {
+                                        if (!confirm(`Delete "${batch.drugName}" (Batch: ${batch.batchNumber})?`)) return;
+                                        const token = await getFreshToken();
+                                        if (!token) { toast.error("Session Expired"); return; }
+                                        const updatedInventory = branch.inventory.filter(b => b.id !== batch.id);
+                                        try {
+                                          const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/update-branch/${branch.branchId}`, { method: "PUT", headers: { "Content-Type": "application/json", "X-User-Token": token, Authorization: `Bearer ${publicAnonKey}` }, body: JSON.stringify({ inventory: updatedInventory }) });
+                                          if (!response.ok) throw new Error("Failed");
+                                          toast.success("Batch Deleted", { description: `${batch.drugName} removed from ${branch.branchName}` });
+                                          await fetchAllBranches();
+                                        } catch { toast.error("Delete Failed"); }
+                                      }}
+                                      className="p-1 text-red-600 hover:bg-red-50 rounded" title="Delete"
+                                    ><Trash2 className="w-4 h-4" /></button>
                                   </div>
                                 </td>
                               </tr>

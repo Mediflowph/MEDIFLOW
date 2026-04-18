@@ -1,5 +1,5 @@
-import { 
-  TrendingUp, 
+import {
+  TrendingUp,
   Package,
   Activity,
   Award,
@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   ToggleLeft,
   ToggleRight,
+  RefreshCw,
 } from 'lucide-react';
 import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
@@ -51,6 +52,7 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
   const [selectedDrug, setSelectedDrug] = useState<string | null>(null);
   const [adminInventory, setAdminInventory] = useState<InventoryBatch[]>([]);
   const [adminBranchCount, setAdminBranchCount] = useState(0);
+  const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
 
   // ── Admin/HO: fetch top utilized drugs ──────────────────────────────────────
   const fetchTopUtilizedDrugs = async () => {
@@ -67,7 +69,7 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
       const allInventories = await response.json();
 
       // Track stock at top level too
-      const drugMap = new Map<string, { dispensed: number; received: number; stock: number; branches: Map<string, BranchDrugData> }>();
+      const drugMap = new Map<string, { dispensed: number; received: number; stock: number; totalSupply: number; branches: Map<string, BranchDrugData> }>();
       const allInventoryItems: InventoryBatch[] = [];
 
       if (Array.isArray(allInventories)) {
@@ -76,7 +78,7 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
           const rawInventory = invData.inventory || invData.value || [];
           const branchInventory: InventoryBatch[] = rawInventory.map((item: any) => ({
             id: item.id,
-            drugName: item.drug_name || item.drugName,
+            drugName: item.drug_name || item.drugName || 'Unknown Drug',
             program: item.program || 'General',
             category: item.category || 'Others',
             dosage: item.dosage || '',
@@ -84,41 +86,73 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
             batchNumber: item.batch_number || item.batchNumber || '',
             // Fix: check beginning_inventory (snake_case from DB) first, then quantity, then camelCase fallback
             beginningInventory: item.beginning_inventory !== undefined ? item.beginning_inventory : (item.quantity !== undefined ? item.quantity : (item.beginningInventory || 0)),
-            quantityReceived: item.quantity_received || item.quantityReceived || 0,
+            quantityReceived: item.quantity_received !== undefined ? item.quantity_received : (item.quantityReceived || 0),
             dateReceived: item.date_received || item.dateReceived || item.created_at || '',
             unitCost: item.unit_cost || item.unit_price || item.unitCost || 0,
-            quantityDispensed: item.quantity_dispensed || item.quantityDispensed || 0,
+            quantityDispensed: item.quantity_dispensed !== undefined ? item.quantity_dispensed : (item.quantityDispensed || 0),
             expirationDate: item.expiration_date || item.expiry_date || item.expirationDate || '',
             remarks: item.remarks || '',
           }));
 
           allInventoryItems.push(...branchInventory);
-          const bName = invData.branchName || 'Unknown';
+          const bName = invData.branchName || invData.userName || 'Unknown Branch';
+
+          console.log(`📊 Processing ${branchInventory.length} items for branch: ${bName}`);
 
           branchInventory.forEach((item) => {
-            const existing = drugMap.get(item.drugName) || { dispensed: 0, received: 0, stock: 0, branches: new Map() };
+            // Log each item being processed
+            if (item.quantityDispensed > 0 || item.quantityReceived > 0) {
+              console.log(`  - ${item.drugName}: dispensed=${item.quantityDispensed}, received=${item.quantityReceived}, beginning=${item.beginningInventory}`);
+            }
+
+            const existing = drugMap.get(item.drugName) || { dispensed: 0, received: 0, stock: 0, totalSupply: 0, branches: new Map() };
             const branchData = existing.branches.get(bName) || { branchName: bName, dispensed: 0, received: 0, stock: 0, utilizationRate: 0 };
+
             const itemStock = Math.max(0, item.beginningInventory + item.quantityReceived - item.quantityDispensed);
-            branchData.dispensed += item.quantityDispensed;
-            branchData.received += item.quantityReceived;
+            const itemSupply = item.beginningInventory + item.quantityReceived;
+
+            // Accumulate values per branch
+            branchData.dispensed += (item.quantityDispensed || 0);
+            branchData.received += (item.quantityReceived || 0);
             branchData.stock += itemStock;
-            branchData.utilizationRate = branchData.received > 0 ? (branchData.dispensed / branchData.received) * 100 : 0;
-            existing.dispensed += item.quantityDispensed;
-            existing.received += item.quantityReceived;
+
+            // Calculate branch utilization rate
+            const branchSupply = branchData.stock + branchData.dispensed;
+            branchData.utilizationRate = branchSupply > 0
+              ? Math.min((branchData.dispensed / branchSupply) * 100, 100)
+              : 0;
+
+            // Accumulate totals across all branches
+            existing.dispensed += (item.quantityDispensed || 0);
+            existing.received += (item.quantityReceived || 0);
             existing.stock += itemStock;
+            existing.totalSupply += itemSupply;
+
             existing.branches.set(bName, branchData);
             drugMap.set(item.drugName, existing);
           });
+
+          console.log(`✅ Processed branch ${bName}: ${branchInventory.length} items`);
         }
       }
+
+      console.log(`📋 Total drugs tracked: ${drugMap.size}`);
+      drugMap.forEach((data, drugName) => {
+        if (data.dispensed > 0) {
+          console.log(`  ${drugName}: total dispensed=${data.dispensed}, branches=${data.branches.size}`);
+          data.branches.forEach((b, bName) => {
+            console.log(`    - ${bName}: dispensed=${b.dispensed}, stock=${b.stock}`);
+          });
+        }
+      });
 
       const drugUtilization: DrugUtilization[] = Array.from(drugMap.entries())
         .map(([drugName, data]) => ({
           drugName,
           totalDispensed: data.dispensed,
           totalReceived: data.received,
-          totalStock: data.stock,   // ← now properly computed
-          utilizationRate: data.received > 0 ? Math.min((data.dispensed / data.received) * 100, 100) : 0,
+          totalStock: data.stock,
+          utilizationRate: data.totalSupply > 0 ? Math.min((data.dispensed / data.totalSupply) * 100, 100) : 0,
           branchCount: data.branches.size,
           branches: Array.from(data.branches.values()).sort((a, b) => b.dispensed - a.dispensed || b.stock - a.stock),
         }))
@@ -129,6 +163,10 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
 
       setTopUtilizedDrugs(drugUtilization);
       setAdminInventory(allInventoryItems);
+      setLastRefreshTime(new Date());
+      console.log(`✅ Loaded ${drugUtilization.length} drugs with utilization data`);
+    } catch (error: any) {
+      console.error('❌ Error fetching utilization data:', error);
     } finally {
       setIsLoadingUtilization(false);
     }
@@ -177,14 +215,29 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
     }).length;
 
     // ── Period-based utilization metrics ─────────────────────────────────────
-    const totalDispensed = periodInventory.reduce((s, i) => s + i.quantityDispensed, 0);
-    const totalReceived  = periodInventory.reduce((s, i) => s + i.quantityReceived, 0);
-    const stockUtilRate  = totalReceived > 0 ? Math.round((totalDispensed / totalReceived) * 100) : 0;
+    // Use full inventory for branch-wide utilization rates as requested to correctly account for all stock
+    const utilSource = inventory;
+    const totalDispensed = utilSource.reduce((s, i) => s + (i.quantityDispensed || 0), 0);
+    const totalReceived  = utilSource.reduce((s, i) => s + (i.quantityReceived || 0), 0);
+    const totalBeginning = utilSource.reduce((s, i) => s + (i.beginningInventory || 0), 0);
+    const totalSupply    = totalBeginning + totalReceived;
+    // Fix: Utilization = dispensed / total supply (not stock on hand)
+    const stockUtilRate  = totalSupply > 0 ? Math.min(Math.round((totalDispensed / totalSupply) * 100), 100) : 0;
 
-    const antimicrobialItems = periodInventory.filter(i => i.category === 'Antimicrobial');
+    // Antimicrobial: check from full inventory for accurate branch reporting
+    const isAntimicrobial = (item: InventoryBatch) => {
+      const cat = (item.category || '').toLowerCase();
+      if (cat === 'antimicrobial') return true;
+      // Also check program as heuristic
+      const prog = (item.program || '').toLowerCase();
+      return prog.includes('ereid') || prog.includes('antimicro') || prog.includes('tb');
+    };
+    const amPeriodItems = periodInventory.filter(isAntimicrobial);
+    const antimicrobialItems = amPeriodItems.length > 0 ? amPeriodItems : inventory.filter(isAntimicrobial);
     const amDispensed = antimicrobialItems.reduce((s, i) => s + i.quantityDispensed, 0);
     const amReceived  = antimicrobialItems.reduce((s, i) => s + i.quantityReceived, 0);
-    const amUtilRate  = amReceived > 0 ? Math.round((amDispensed / amReceived) * 100) : 0;
+    const amSupply    = antimicrobialItems.reduce((s, i) => s + i.beginningInventory + i.quantityReceived, 0);
+    const amUtilRate  = amSupply > 0 ? Math.round((amDispensed / amSupply) * 100) : 0;
 
     // ── Top 10 drugs by dispensed quantity (period-filtered) ─────────────────
     const drugMap = new Map<string, { dispensed: number; received: number; stock: number }>();
@@ -215,7 +268,9 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
         dispensed: data.dispensed,
         received: data.received,
         stock: data.stock,
-        utilizationRate: data.received > 0 ? Math.min((data.dispensed / data.received) * 100, 100) : 0,
+        utilizationRate: (data.stock + data.dispensed) > 0
+          ? Math.min((data.dispensed / (data.stock + data.dispensed)) * 100, 100)
+          : 0,
       }))
       .filter(d => d.dispensed > 0 || d.stock > 0)
       .sort((a, b) => b.dispensed - a.dispensed || b.stock - a.stock)
@@ -277,8 +332,8 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
         {/* Header + Period Toggle */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-bold text-gray-800">Dashboard Overview</h2>
-            <p className="text-gray-500 text-sm mt-0.5">
+            <h2 className="text-2xl font-bold text-gray-800 break-words">Dashboard Overview</h2>
+            <p className="text-gray-500 text-sm mt-0.5 break-words">
               {branchName ? `${branchName}` : 'Drug Inventory System'}
             </p>
           </div>
@@ -321,11 +376,11 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
           {stats.map((stat) => {
             const Icon = stat.icon;
             return (
-              <Card key={stat.title} className="border-none shadow-md hover:shadow-lg transition-shadow">
+              <Card key={stat.title} className="border-none shadow-md hover:shadow-lg transition-shadow overflow-hidden">
                 <CardContent className="pt-6">
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
@@ -397,7 +452,7 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
               <p className="text-xs text-gray-500 mt-0.5">Antimicrobials only — {periodLabel}</p>
             </CardHeader>
             <CardContent className="pt-5">
-              {amReceived === 0 && amDispensed === 0 ? (
+              {antimicrobialItems.length === 0 ? (
                 <div className="text-center py-6 text-gray-400">
                   <ShieldCheck className="w-10 h-10 mx-auto mb-2 opacity-30" />
                   <p className="text-sm">No antimicrobial data for this period</p>
@@ -458,11 +513,11 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
                 <p className="text-sm">No dispensing data available</p>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {trendData.map((data) => (
-                  <div key={data.label} className="space-y-1">
+                  <div key={data.label} className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs text-gray-500">
-                      <span className="font-medium text-gray-700 w-8">{data.label}</span>
+                      <span className="font-medium text-gray-700 w-10">{data.label}</span>
                       <span>
                         {data.received > 0 ? `${data.received.toLocaleString()} recv` : ''}
                         {data.received > 0 && data.dispensed > 0 ? ' · ' : ''}
@@ -470,26 +525,30 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
                         {data.received === 0 && data.dispensed === 0 ? 'no activity' : ''}
                       </span>
                     </div>
+
                     {/* Received bar */}
-                    <div className="w-full bg-gray-100 rounded-full h-3.5">
-                      <div
-                        className="bg-gradient-to-r from-blue-400 to-indigo-500 h-3.5 rounded-full transition-all flex items-center justify-end pr-1.5"
-                        style={{ width: `${Math.max((data.received / maxTrendValue) * 100, data.received > 0 ? 2 : 0)}%` }}
-                      >
-                        {data.received > 0 && <span className="text-[10px] text-white font-medium">{data.received}</span>}
-                      </div>
-                    </div>
-                    {/* Dispensed bar */}
-                    {data.dispensed > 0 && (
-                      <div className="w-full bg-gray-100 rounded-full h-2.5 ml-8">
+                    <div className="flex items-center gap-2">
+                      <div className="w-full bg-gray-100 rounded-full h-3">
                         <div
-                          className="bg-gradient-to-r from-purple-500 to-[#9867C5] h-2.5 rounded-full transition-all flex items-center justify-end pr-1"
-                          style={{ width: `${Math.max((data.dispensed / maxTrendValue) * 100, 2)}%` }}
+                          className="bg-gradient-to-r from-blue-400 to-indigo-500 h-3 rounded-full transition-all flex items-center justify-end pr-1.5"
+                          style={{ width: `${Math.max((data.received / maxTrendValue) * 100, data.received > 0 ? 2 : 0)}%` }}
                         >
-                          <span className="text-[9px] text-white font-medium">{data.dispensed}</span>
+                          {data.received > 0 && <span className="text-[9px] text-white font-medium">{data.received}</span>}
                         </div>
                       </div>
-                    )}
+                    </div>
+
+                    {/* Dispensed bar (separate row) */}
+                    <div className="flex items-center gap-2">
+                      <div className="w-full bg-gray-100 rounded-full h-3">
+                        <div
+                          className="bg-gradient-to-r from-purple-500 to-[#9867C5] h-3 rounded-full transition-all flex items-center justify-end pr-1.5"
+                          style={{ width: `${Math.max((data.dispensed / maxTrendValue) * 100, data.dispensed > 0 ? 2 : 0)}%` }}
+                        >
+                          {data.dispensed > 0 && <span className="text-[9px] text-white font-medium">{data.dispensed}</span>}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ))}
                 <div className="flex items-center gap-4 pt-2 border-t text-xs text-gray-500">
@@ -607,86 +666,12 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
           <h1 className="text-4xl font-bold bg-gradient-to-r from-[#9867C5] to-blue-600 bg-clip-text text-transparent">
             Drug Utilization Analytics
           </h1>
-          <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-            Real-time insights into the most utilized medicines across all branches
-          </p>
+          {lastRefreshTime && (
+            <p className="text-sm text-gray-500">
+              Last updated: {lastRefreshTime.toLocaleTimeString()} • Auto-refreshes every 30 seconds
+            </p>
+          )}
         </div>
-
-        {/* ── Always-visible summary stats ───────────────────────────────────── */}
-        {isLoadingUtilization && adminInventory.length === 0 ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[...Array(4)].map((_, i) => (
-              <Card key={i} className="border-none shadow-xl bg-white/70 animate-pulse">
-                <CardContent className="pt-6 pb-5">
-                  <div className="h-4 bg-gray-200 rounded w-3/4 mb-3" />
-                  <div className="h-8 bg-gray-200 rounded w-1/2" />
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Card className="border-none shadow-xl bg-gradient-to-br from-white to-purple-50">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Total Stock (All Branches)</p>
-                    <p className="text-3xl font-bold text-gray-800">{totalAdminStock.toLocaleString()}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{uniqueDrugsCount} unique drugs</p>
-                  </div>
-                  <div className="w-12 h-12 bg-purple-100 rounded-2xl flex items-center justify-center flex-shrink-0">
-                    <Package className="w-6 h-6 text-[#9867C5]" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-none shadow-xl bg-gradient-to-br from-white to-blue-50">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Active Branches</p>
-                    <p className="text-3xl font-bold text-gray-800">{adminBranchCount}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{adminInventory.length} total batches</p>
-                  </div>
-                  <div className="w-12 h-12 bg-blue-100 rounded-2xl flex items-center justify-center flex-shrink-0">
-                    <Building className="w-6 h-6 text-blue-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-none shadow-xl bg-gradient-to-br from-white to-amber-50">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Low / Near-Expiry</p>
-                    <p className="text-3xl font-bold text-amber-600">{adminLowStockCount + adminNearExpiryCount}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{adminLowStockCount} low · {adminNearExpiryCount} near-expiry</p>
-                  </div>
-                  <div className="w-12 h-12 bg-amber-100 rounded-2xl flex items-center justify-center flex-shrink-0">
-                    <AlertTriangle className="w-6 h-6 text-amber-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-none shadow-xl bg-gradient-to-br from-white to-green-50">
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1">Total Dispensed</p>
-                    <p className="text-3xl font-bold text-green-700">{totalAdminDispensed.toLocaleString()}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{totalAdminReceived.toLocaleString()} received</p>
-                  </div>
-                  <div className="w-12 h-12 bg-green-100 rounded-2xl flex items-center justify-center flex-shrink-0">
-                    <Activity className="w-6 h-6 text-green-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
 
         {/* Top 10 Drug List */}
         <Card className="border-none shadow-2xl bg-white/80 backdrop-blur">
@@ -696,15 +681,21 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
                 <Award className="w-7 h-7 text-[#9867C5]" />
                 Top 10 Most Utilized Drugs
               </CardTitle>
-              <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm">
-                <Building className="w-4 h-4 text-gray-600" />
-                <span className="text-sm font-medium text-gray-700">Multi-Branch</span>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={fetchTopUtilizedDrugs}
+                  disabled={isLoadingUtilization}
+                  className="flex items-center gap-2 px-4 py-2 bg-[#9867C5] hover:bg-[#9867C5]/90 disabled:bg-gray-400 text-white rounded-full shadow-md transition-all"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isLoadingUtilization ? 'animate-spin' : ''}`} />
+                  <span className="text-sm font-medium">Refresh</span>
+                </button>
+                <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-full shadow-sm">
+                  <Building className="w-4 h-4 text-gray-600" />
+                  <span className="text-sm font-medium text-gray-700">{adminBranchCount} Branch{adminBranchCount !== 1 ? 'es' : ''}</span>
+                </div>
               </div>
             </div>
-            <p className="text-sm text-gray-600 mt-2 flex items-center gap-2">
-              <TrendingUp className="w-4 h-4" />
-              Ranked by total quantity dispensed across all branches • Click a drug to see breakdown
-            </p>
           </CardHeader>
           <CardContent className="p-6">
             {isLoadingUtilization ? (
@@ -756,25 +747,49 @@ export function HomeView({ inventory, userToken, userRole, branchName }: HomeVie
                     </div>
 
                     {/* Branch breakdown */}
-                    {selectedDrug === drug.drugName && drug.branches.length > 0 && (
-                      <div className="mt-2 ml-6 p-4 bg-white rounded-xl border border-[#9867C5]/20 shadow-sm">
-                        <h4 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                    {selectedDrug === drug.drugName && (
+                      <div className="mt-2 ml-6 p-5 bg-gradient-to-br from-white to-gray-50 rounded-xl border-2 border-[#9867C5]/20 shadow-md">
+                        <h4 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2 pb-2 border-b border-gray-200">
                           <Building className="w-4 h-4 text-[#9867C5]" />
-                          Branch Breakdown
+                          Branch Breakdown ({drug.branches.length} branch{drug.branches.length !== 1 ? 'es' : ''})
                         </h4>
-                        <div className="space-y-2">
-                          {drug.branches.map(branch => (
-                            <div key={branch.branchName} className="flex items-center justify-between text-sm">
-                              <span className="text-gray-700 font-medium">{branch.branchName}</span>
-                              <div className="flex items-center gap-4 text-gray-600">
-                                <span>{branch.dispensed.toLocaleString()} disp</span>
-                                <span>{branch.received.toLocaleString()} recv</span>
-                                <span>{branch.stock.toLocaleString()} stock</span>
-                                <span className="font-semibold text-[#9867C5]">{branch.utilizationRate.toFixed(1)}%</span>
+                        {drug.branches.length === 0 ? (
+                          <div className="text-center py-6 text-gray-400">
+                            <Package className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                            <p className="text-sm">No branch data available for this drug</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {drug.branches.map(branch => (
+                            <div key={branch.branchName} className="p-3 bg-white rounded-lg border border-gray-200 hover:border-[#9867C5]/50 transition-all">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-gray-800 font-semibold text-sm">{branch.branchName}</span>
+                                <span className="text-lg font-bold text-[#9867C5]">{branch.utilizationRate.toFixed(1)}%</span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-3 text-xs">
+                                <div className="text-center p-2 bg-purple-50 rounded">
+                                  <p className="text-purple-600 font-bold">{branch.dispensed.toLocaleString()}</p>
+                                  <p className="text-gray-500">Dispensed</p>
+                                </div>
+                                <div className="text-center p-2 bg-blue-50 rounded">
+                                  <p className="text-blue-600 font-bold">{branch.received.toLocaleString()}</p>
+                                  <p className="text-gray-500">Received</p>
+                                </div>
+                                <div className="text-center p-2 bg-green-50 rounded">
+                                  <p className="text-green-600 font-bold">{branch.stock.toLocaleString()}</p>
+                                  <p className="text-gray-500">In Stock</p>
+                                </div>
+                              </div>
+                              <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5">
+                                <div
+                                  className="bg-gradient-to-r from-[#9867C5] to-blue-500 h-1.5 rounded-full"
+                                  style={{ width: `${branch.utilizationRate}%` }}
+                                />
                               </div>
                             </div>
                           ))}
-                        </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

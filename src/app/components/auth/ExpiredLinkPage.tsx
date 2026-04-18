@@ -153,12 +153,6 @@ export function ExpiredLinkPage({ onBack }: ExpiredLinkPageProps) {
             </>
           )}
         </div>
-
-        <div className="bg-[#fff9c4] px-8 py-3 flex items-center justify-between gap-2">
-          <span className="text-[10px] font-bold text-[#f57f17] uppercase tracking-wider">
-            Official DOH Inventory Portal
-          </span>
-        </div>
       </motion.div>
     </div>
   );

@@ -1,26 +1,27 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/app/utils/supabase';
-import { authManager } from '@/app/utils/authManager';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { isLowStock, getStockStatus, calculateReorderPoint } from '@/app/utils/reorderPoint';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { InventoryBatch } from '@/app/types/inventory';
-import { 
-  RefreshCw, 
-  XCircle, 
-  AlertTriangle, 
-  Calendar, 
-  TrendingDown, 
-  Building, 
-  Package, 
-  Pill, 
-  AlertCircle, 
-  FileSpreadsheet, 
+import { fetchTransactionHistory, Transaction } from '@/app/utils/transactionLog';
+import {
+  RefreshCw,
+  XCircle,
+  AlertTriangle,
+  Calendar,
+  TrendingDown,
+  Building,
+  Package,
+  Pill,
+  AlertCircle,
+  FileSpreadsheet,
   PackagePlus,
   Phone,
-  User
+  User,
+  ArrowDownCircle
 } from 'lucide-react';
 
 interface AlertsViewProps {
@@ -28,6 +29,7 @@ interface AlertsViewProps {
   userToken?: string;
   userRole?: string;
   branchName?: string;
+  branchId?: string;
 }
 
 interface BranchData {
@@ -51,48 +53,25 @@ interface BranchAlert {
   stockLevel?: number;
 }
 
-export function AlertsView({ inventory, userToken, userRole = 'Staff', branchName }: AlertsViewProps) {
+export function AlertsView({ inventory, userToken, userRole = 'Staff', branchName, branchId }: AlertsViewProps) {
   const [branches, setBranches] = useState<BranchData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [branchAlerts, setBranchAlerts] = useState<BranchAlert[]>([]);
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
   const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
   const [allBranches, setAllBranches] = useState<Array<{id: string, name: string}>>([]);
-  const [currentToken, setCurrentToken] = useState<string | null>(userToken || null);
   // Track live receiving events for the staff view
   const [liveReceivingEvents, setLiveReceivingEvents] = useState<InventoryBatch[]>([]);
   const [hasNewReceiving, setHasNewReceiving] = useState(false);
+  // Transaction history
+  const [transactionHistory, setTransactionHistory] = useState<Transaction[]>([]);
+  const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
 
   const now = new Date();
 
-  // Get fresh token whenever needed using centralized auth manager
-  const getFreshToken = async (): Promise<string | null> => {
-    try {
-      const token = await authManager.getToken();
-      if (token) {
-        setCurrentToken(token);
-      }
-      return token;
-    } catch (error) {
-      console.error('❌ Error getting token:', error);
-      return null;
-    }
-  };
-
-  // Update token when prop changes
-  useEffect(() => {
-    if (userToken) {
-      setCurrentToken(userToken);
-    }
-  }, [userToken]);
-
   // Fetch all branches for HO and Admin
   const fetchAllBranches = async () => {
-    if (!currentToken) {
-      // Try to get a fresh token
-      const freshToken = await getFreshToken();
-      if (!freshToken) return;
-    }
+    if (!userToken) return;
     
     try {
       setIsLoading(true);
@@ -118,7 +97,7 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
         `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/all-branches`,
         {
           headers: {
-            "X-User-Token": currentToken!,
+            "X-User-Token": userToken!,
             Authorization: `Bearer ${publicAnonKey}`,
           },
         },
@@ -284,6 +263,26 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
     };
   }, [userRole]);
 
+  // Fetch transaction history for staff users
+  useEffect(() => {
+    const loadTransactionHistory = async () => {
+      if (userRole === 'Administrator' || userRole === 'Health Officer' || !userToken || !branchId) return;
+
+      setIsLoadingTransactions(true);
+      try {
+        const transactions = await fetchTransactionHistory(branchId, userToken, 30);
+        setTransactionHistory(transactions);
+        console.log(`📜 Loaded ${transactions.length} transactions for last 30 days`);
+      } catch (error) {
+        console.error('Failed to load transaction history:', error);
+      } finally {
+        setIsLoadingTransactions(false);
+      }
+    };
+
+    loadTransactionHistory();
+  }, [userToken, userRole, branchId]);
+
   // Track inventory changes — update live receiving events list whenever inventory prop changes
   useEffect(() => {
     if (userRole === 'Administrator' || userRole === 'Health Officer') return;
@@ -300,7 +299,7 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
   }, [inventory, userRole]);
 
   useEffect(() => {
-    if ((userRole === 'Administrator' || userRole === 'Health Officer') && currentToken) {
+    if ((userRole === 'Administrator' || userRole === 'Health Officer') && userToken) {
       console.log('🔔 [AlertsView] Initial load for Admin/HO - fetching branch data');
       fetchAllBranches();
       
@@ -318,7 +317,7 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
         clearInterval(intervalId);
       };
     }
-  }, [currentToken, userRole]);
+  }, [userToken, userRole]);
 
   // For Admin and Health Officer - Multi-Branch Alerts
   if (userRole === 'Administrator' || userRole === 'Health Officer') {
@@ -358,7 +357,6 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
         <div className="flex justify-between items-start">
           <div>
             <h2 className="text-2xl font-bold text-gray-800 mb-2">Multi-Branch Alerts & Notifications</h2>
-            <p className="text-gray-600">Real-time monitoring across all branch locations</p>
             {lastRefreshTime && (
               <p className="text-xs text-gray-500 mt-1">
                 {isAutoRefreshing ? (
@@ -1035,13 +1033,9 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
     }
   };
 
-  // Recent receiving — driven by live state updated from inventory prop changes
-  const recentReceiving = liveReceivingEvents;
-
-  const recentDispensing = inventory
-    .filter(item => item.quantityDispensed > 0)
-    .sort((a, b) => (b.quantityDispensed || 0) - (a.quantityDispensed || 0))
-    .slice(0, 5);
+  // Recent receiving — use transaction history if available, fallback to inventory
+  const recentReceiving = transactionHistory.filter(t => t.type === 'receive').slice(0, 8);
+  const recentDispensing = transactionHistory.filter(t => t.type === 'dispense').slice(0, 8);
 
   return (
     <div className="p-8 space-y-6">
@@ -1049,8 +1043,7 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
         <div>
           <h2 className="text-2xl font-bold text-gray-800 mb-2">Alerts & Notifications</h2>
           <p className="text-gray-600">
-            Real-time monitoring of expiry dates, stock levels, and activity
-            {branchName ? ` — ${branchName}` : ''}
+            {branchName ? `  ${branchName}` : ''}
           </p>
         </div>
         <button
@@ -1304,12 +1297,12 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
               </div>
             ) : (
               <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                {recentReceiving.map((item, idx) => {
-                  const daysSince = Math.floor((now.getTime() - new Date(item.dateReceived).getTime()) / (1000 * 60 * 60 * 24));
+                {recentReceiving.map((txn, idx) => {
+                  const daysSince = Math.floor((now.getTime() - new Date(txn.timestamp).getTime()) / (1000 * 60 * 60 * 24));
                   const isToday = daysSince === 0;
                   return (
                     <div
-                      key={`${item.id}-${idx}`}
+                      key={`${txn.id}-${idx}`}
                       className={`flex justify-between items-center p-3 rounded-lg border transition-all ${
                         isToday
                           ? 'bg-[#9867C5]/10 border-[#9867C5]/30 shadow-sm'
@@ -1319,16 +1312,18 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
                       <div className="flex items-start gap-2 min-w-0">
                         <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${isToday ? 'bg-[#9867C5] animate-pulse' : 'bg-gray-300'}`} />
                         <div className="min-w-0">
-                          <p className="font-semibold text-gray-800 text-sm truncate">{item.drugName}</p>
-                          {item.dosage && <p className="text-xs text-gray-500">{item.dosage}</p>}
-                          {item.batchNumber && <p className="text-xs text-gray-400">Batch: {item.batchNumber}</p>}
+                          <p className="font-semibold text-gray-800 text-sm truncate">{txn.drugName}</p>
+                          {txn.dosage && <p className="text-xs text-gray-500">{txn.dosage}</p>}
+                          {txn.batchNumber && <p className="text-xs text-gray-400">Batch: {txn.batchNumber}</p>}
                         </div>
                       </div>
                       <div className="text-right flex-shrink-0 ml-2">
-                        <p className={`text-sm font-bold ${item.quantityReceived > 0 ? 'text-[#9867C5]' : 'text-gray-400'}`}>
-                          {item.quantityReceived > 0 ? `+${item.quantityReceived.toLocaleString()}` : '—'}
+                        <p className={`text-sm font-bold ${txn.quantity > 0 ? 'text-[#9867C5]' : 'text-gray-400'}`}>
+                          {txn.quantity > 0 ? `+${txn.quantity.toLocaleString()}` : '—'}
                         </p>
-                        <p className="text-xs text-gray-400">{isToday ? 'Today' : `${daysSince}d ago`}</p>
+                        <p className="text-xs text-gray-400">
+                          {isToday ? 'Today' : daysSince === 1 ? 'Yesterday' : `${daysSince}d ago`}
+                        </p>
                         {isToday && (
                           <span className="text-[10px] bg-[#9867C5] text-white px-1.5 py-0.5 rounded-full">NEW</span>
                         )}
@@ -1343,28 +1338,55 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
 
         <Card className="border-none shadow-md">
           <CardHeader className="border-b bg-gradient-to-r from-purple-50 to-pink-50">
-            <CardTitle className="flex items-center gap-2 text-gray-800">
-              <Pill className="w-5 h-5 text-purple-600" />
-              Recent Dispensing Activity
+            <CardTitle className="flex items-center justify-between text-gray-800">
+              <span className="flex items-center gap-2">
+                <ArrowDownCircle className="w-5 h-5 text-purple-600" />
+                Recent Dispensing (Last 30 Days)
+              </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-6">
             {recentDispensing.length === 0 ? (
-              <p className="text-center text-gray-500 py-4">No recent dispensing activity</p>
+              <div className="text-center py-6 text-gray-400">
+                <ArrowDownCircle className="w-10 h-10 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">No dispensing activity in the last 30 days</p>
+              </div>
             ) : (
-              <div className="space-y-3">
-                {recentDispensing.map(item => (
-                  <div key={item.id} className="flex justify-between items-center p-3 bg-purple-50 rounded-lg">
-                    <div>
-                      <p className="font-semibold text-gray-800">{item.drugName}</p>
-                      <p className="text-xs text-gray-600">{item.dosage}</p>
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {recentDispensing.map((txn, idx) => {
+                  const daysSince = Math.floor((now.getTime() - new Date(txn.timestamp).getTime()) / (1000 * 60 * 60 * 24));
+                  const isToday = daysSince === 0;
+                  return (
+                    <div
+                      key={`${txn.id}-${idx}`}
+                      className={`flex justify-between items-center p-3 rounded-lg border transition-all ${
+                        isToday
+                          ? 'bg-purple-100 border-purple-300 shadow-sm'
+                          : 'bg-purple-50 border-purple-200'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2 min-w-0">
+                        <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${isToday ? 'bg-purple-600 animate-pulse' : 'bg-purple-300'}`} />
+                        <div className="min-w-0">
+                          <p className="font-semibold text-gray-800 text-sm truncate">{txn.drugName}</p>
+                          {txn.dosage && <p className="text-xs text-gray-500">{txn.dosage}</p>}
+                          {txn.batchNumber && <p className="text-xs text-gray-400">Batch: {txn.batchNumber}</p>}
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0 ml-2">
+                        <p className="text-sm font-bold text-purple-600">
+                          -{txn.quantity.toLocaleString()}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {isToday ? 'Today' : daysSince === 1 ? 'Yesterday' : `${daysSince}d ago`}
+                        </p>
+                        {isToday && (
+                          <span className="text-[10px] bg-purple-600 text-white px-1.5 py-0.5 rounded-full">NEW</span>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-sm font-medium text-purple-600">-{item.quantityDispensed}</p>
-                      <p className="text-xs text-gray-500">Batch: {item.batchNumber}</p>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>

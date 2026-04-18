@@ -154,7 +154,6 @@ export function ReceiveMedicationsView({ onAddStock, existingDrugs = [], invento
     <div className="p-8 space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-gray-800 mb-2">Receive Medications</h2>
-        <p className="text-gray-600">Add new stock entries with batch tracking and smart suggestions</p>
       </div>
 
       <Card className="border-none shadow-md max-w-4xl">

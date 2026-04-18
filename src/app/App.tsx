@@ -3,6 +3,7 @@ import { Toaster, toast } from 'sonner';
 import { supabase } from '@/app/utils/supabase';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
 import { kvStore } from '@/app/utils/kvStore';
+import { logTransaction } from '@/app/utils/transactionLog';
 import { LoginPage } from '@/app/components/auth/LoginPage';
 import { ResetPasswordPage } from '@/app/components/auth/ResetPasswordPage';
 import { ExpiredLinkPage } from '@/app/components/auth/ExpiredLinkPage';
@@ -212,6 +213,7 @@ export default function App() {
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
+  const [lastManualSync, setLastManualSync] = useState<number>(0);
   // Detect password-recovery flow immediately from the URL hash so we never
   // miss the Supabase PASSWORD_RECOVERY event (which fires during client init,
   // before the onAuthStateChange listener is registered in the useEffect).
@@ -250,13 +252,13 @@ export default function App() {
   });
 
   // Get fresh authentication token - Supabase handles refresh automatically
+  // IMPORTANT: This function should NOT update local session state to avoid
+  // race conditions during logout where it might restore a cleared session
   const getFreshToken = async (): Promise<string | null> => {
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error || !session) {
       return null;
     }
-    // Update local session state
-    setSession(session);
     return session.access_token;
   };
 
@@ -341,11 +343,18 @@ export default function App() {
   };
 
   // Sync inventory to Supabase
-  const syncInventoryToCloud = async (inventoryData: InventoryBatch[], branchId: string) => {
-    if (!branchId) return false;
+  const syncInventoryToCloud = async (inventoryData: InventoryBatch[], branchId: string, isManualSync: boolean = false) => {
+    if (!branchId) {
+      console.log('⚠️ Sync skipped: no branch ID');
+      return false;
+    }
+
     setIsSyncing(true);
-    console.log('🔄 Syncing to branch', branchId);
-    
+    if (isManualSync) {
+      setLastManualSync(Date.now());
+    }
+    console.log(`🔄 ${isManualSync ? 'MANUAL' : 'AUTO'} sync to branch ${branchId} (${inventoryData.length} items)`);
+
     try {
       const token = await getFreshToken();
       if (!token) {
@@ -356,6 +365,7 @@ export default function App() {
 
       // Transform inventory to SQL format
       const transformedInventory = inventoryData.map(item => ({
+        id: item.id, // Include ID for updates
         drug_name: item.drugName,
         generic_name: item.drugName, // Using drugName as generic for now
         dosage: item.dosage || null,
@@ -363,8 +373,27 @@ export default function App() {
         expiry_date: item.expirationDate,
         batch_number: item.batchNumber,
         supplier: 'N/A',
-        unit_price: item.unitCost
+        unit_price: item.unitCost,
+        program: item.program || 'General',
+        unit: item.unit || 'units',
+        category: item.category || 'Others',
+        beginning_inventory: item.beginningInventory || 0,
+        quantity_received: item.quantityReceived || 0,
+        date_received: item.dateReceived,
+        quantity_dispensed: item.quantityDispensed || 0,
+        remarks: item.remarks || ''
       }));
+
+      // Log items with dispensed quantities
+      const dispensedItems = transformedInventory.filter(i => i.quantity_dispensed > 0);
+      if (dispensedItems.length > 0) {
+        console.log(`📦 Syncing ${dispensedItems.length} items with dispensed quantities:`);
+        dispensedItems.forEach(item => {
+          console.log(`   - ${item.drug_name}: dispensed=${item.quantity_dispensed}, received=${item.quantity_received}, stock=${item.quantity}`);
+        });
+      } else {
+        console.log('📦 No dispensed items in this sync');
+      }
 
       // Send to backend SQL API
       const response = await fetch(
@@ -376,20 +405,26 @@ export default function App() {
             'X-User-Token': token,
             'Authorization': `Bearer ${publicAnonKey}`
           },
-          body: JSON.stringify({ inventory: transformedInventory })
+          body: JSON.stringify({
+            inventory: transformedInventory,
+            branchId: branchId
+          })
         }
       );
 
       if (!response.ok) {
-        throw new Error('Failed to sync inventory');
+        const errorData = await response.json().catch(() => ({}));
+        console.error('❌ Sync failed with status:', response.status, errorData);
+        throw new Error(errorData.error || 'Failed to sync inventory');
       }
 
-      console.log('✅ Inventory synced to SQL database');
+      const result = await response.json();
+      console.log('✅ Inventory synced to SQL database:', result);
       setLastSyncTime(new Date());
       setIsSyncing(false);
       return true;
-    } catch (error) {
-      console.error('❌ Sync error:', error);
+    } catch (error: any) {
+      console.error('❌ Sync error:', error.message || error);
       setIsSyncing(false);
       return false;
     }
@@ -402,46 +437,77 @@ export default function App() {
       console.log('ℹ️ Skipping auto-sync for admin account');
       return;
     }
-    
+
     // Don't sync if currently syncing or data hasn't been initially loaded
-    if (isSyncing || !isDataLoaded || !currentBranch || inventory.length === 0) {
+    if (isSyncing || !isDataLoaded || !currentBranch) {
       return;
     }
-    
+
+    // Allow sync even if inventory is empty (to clear server-side data)
+    console.log(`📊 Inventory changed (${inventory.length} items), scheduling auto-sync...`);
+
     // Debounce sync operations to prevent continuous syncing
     const syncTimeout = setTimeout(async () => {
-      console.log('📊 Inventory changed, auto-syncing...');
-      const success = await syncInventoryToCloud(inventory, currentBranch.id);
+      // Skip auto-sync if manual sync happened recently (within last 2 seconds)
+      const timeSinceManualSync = Date.now() - lastManualSync;
+      if (timeSinceManualSync < 2000) {
+        console.log('⏭️ Skipping auto-sync: manual sync happened recently');
+        return;
+      }
+
+      // Get fresh session status at sync time (not from closure)
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+
+      if (!currentSession || !currentBranch) {
+        console.log('⚠️ Sync cancelled: session or branch cleared during timeout');
+        return;
+      }
+
+      console.log('🔄 Executing auto-sync...');
+      const success = await syncInventoryToCloud(inventory, currentBranch.id, false);
       if (!success) {
-        toast.error('Sync Failed', { 
-          description: 'Failed to save to cloud. Changes may be lost on refresh.' 
+        toast.error('Sync Failed', {
+          description: 'Failed to save to cloud. Changes may be lost on refresh.'
         });
       }
     }, 1000); // Wait 1 second before syncing to batch rapid changes
-    
-    return () => clearTimeout(syncTimeout);
+
+    return () => {
+      console.log('🧹 Cleanup: clearing pending sync timeout');
+      clearTimeout(syncTimeout);
+    };
   }, [inventory, currentBranch?.id]); // Only trigger on inventory or branch changes
 
   // Supabase real-time subscription — re-fetch inventory when the table changes
   useEffect(() => {
     if (!currentBranch?.id || currentBranch.id === 'all' || currentBranch.id === 'all-branches') return;
 
+    console.log(`📡 Setting up real-time subscription for branch: ${currentBranch.id}`);
+
     const channel = supabase
       .channel(`inventory-realtime-${currentBranch.id}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'inventory' },
-        () => {
-          console.log('📡 Real-time: inventory table changed, refreshing…');
-          fetchInventory(currentBranch.id);
+        async () => {
+          // Check for fresh session at event time (not from closure)
+          const { data: { session: currentSession } } = await supabase.auth.getSession();
+
+          if (currentSession && currentBranch) {
+            console.log('📡 Real-time: inventory table changed, refreshing…');
+            fetchInventory(currentBranch.id);
+          } else {
+            console.log('⚠️ Real-time event ignored: no active session');
+          }
         },
       )
       .subscribe();
 
     return () => {
+      console.log('🔌 Unsubscribing from real-time channel');
       supabase.removeChannel(channel);
     };
-  }, [currentBranch?.id]);
+  }, [currentBranch?.id]); // Only depend on branch ID changes
 
   // Ensure data loaded flag is properly set when session changes
   useEffect(() => {
@@ -450,36 +516,190 @@ export default function App() {
     }
   }, [session]);
 
-  const handleAddStock = (batch: Omit<InventoryBatch, 'id'>) => {
+  const handleAddStock = async (batch: Omit<InventoryBatch, 'id'>) => {
     const newBatch: InventoryBatch = {
       ...batch,
       id: Math.random().toString(36).substr(2, 9),
     };
-    
-    setInventory(prev => [...prev, newBatch]);
+
+    // Update local state
+    const updatedInventory = [...inventory, newBatch];
+    setInventory(updatedInventory);
+
+    // Force immediate sync with updated inventory
+    if (session && currentBranch) {
+      console.log('🔄 Force syncing after receiving stock...');
+      await syncInventoryToCloud(updatedInventory, currentBranch.id, true);
+    }
+
+    // Log transaction
+    if (session && currentBranch && batch.quantityReceived > 0) {
+      try {
+        await logTransaction(
+          'receive',
+          {
+            drugName: batch.drugName,
+            dosage: batch.dosage,
+            batchNumber: batch.batchNumber,
+            quantity: batch.quantityReceived,
+            unit: batch.unit,
+          },
+          {
+            branchId: currentBranch.id,
+            branchName: currentBranch.name,
+            userName: session.user.user_metadata?.name || session.user.email || 'Unknown',
+            userId: session.user.id,
+          },
+          session.access_token
+        );
+      } catch (error) {
+        console.error('Failed to log receive transaction:', error);
+      }
+    }
+
     toast.success('Stock added successfully!', {
       description: `${batch.drugName} - Batch ${batch.batchNumber}`,
     });
   };
 
-  const handleDispense = (batchId: string, quantity: number) => {
-    setInventory(prev => prev.map(batch =>
-      batch.id === batchId
-        ? { ...batch, quantityDispensed: batch.quantityDispensed + quantity }
-        : batch
-    ));
-    
+  const handleDispense = async (batchId: string, quantity: number) => {
     const batch = inventory.find(b => b.id === batchId);
+    if (!batch) {
+      console.error('Batch not found:', batchId);
+      return;
+    }
+
+    // Update local state with new dispensed quantity
+    const updatedInventory = inventory.map(b =>
+      b.id === batchId
+        ? { ...b, quantityDispensed: b.quantityDispensed + quantity }
+        : b
+    );
+    setInventory(updatedInventory);
+
+    console.log(`💊 Dispensing ${quantity} units of ${batch.drugName}`);
+    console.log(`   Previous dispensed: ${batch.quantityDispensed}, New dispensed: ${batch.quantityDispensed + quantity}`);
+
+    // Force immediate sync with updated inventory
+    if (session && currentBranch) {
+      console.log('🔄 Force syncing after dispensing...');
+      const syncSuccess = await syncInventoryToCloud(updatedInventory, currentBranch.id, true);
+      if (syncSuccess) {
+        console.log('✅ Dispense synced successfully');
+      } else {
+        console.error('❌ Dispense sync failed');
+      }
+    }
+
+    // Log transaction
+    if (session && currentBranch && quantity > 0) {
+      try {
+        await logTransaction(
+          'dispense',
+          {
+            drugName: batch.drugName,
+            dosage: batch.dosage,
+            batchNumber: batch.batchNumber,
+            quantity: quantity,
+            unit: batch.unit,
+          },
+          {
+            branchId: currentBranch.id,
+            branchName: currentBranch.name,
+            userName: session.user.user_metadata?.name || session.user.email || 'Unknown',
+            userId: session.user.id,
+          },
+          session.access_token
+        );
+      } catch (error) {
+        console.error('Failed to log dispense transaction:', error);
+      }
+    }
+
     toast.success('Medicine dispensed successfully!', {
-      description: `${batch?.drugName} - ${quantity} units`,
+      description: `${batch.drugName} - ${quantity} units`,
     });
   };
 
-  const handleDeleteBatch = (batchId: string) => {
-    setInventory(prev => prev.filter(batch => batch.id !== batchId));
-    toast.success('Batch deleted successfully!', {
-      description: `Batch ${batchId} removed from inventory`,
-    });
+  const handleDeleteBatch = async (batchId: string) => {
+    try {
+      const batch = inventory.find(b => b.id === batchId);
+      if (!batch || !currentBranch) return;
+
+      // Delete from local state
+      setInventory(prev => prev.filter(b => b.id !== batchId));
+
+      // Delete from database
+      const token = await getFreshToken();
+      if (token) {
+        await fetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/${batchId}`,
+          {
+            method: 'DELETE',
+            headers: {
+              'X-User-Token': token,
+              'Authorization': `Bearer ${publicAnonKey}`,
+            },
+          }
+        );
+      }
+
+      toast.success('Batch deleted successfully!', {
+        description: `${batch.drugName} removed from inventory`,
+      });
+    } catch (error) {
+      console.error('Delete error:', error);
+      toast.error('Failed to delete batch');
+    }
+  };
+
+  const handleUpdateBatch = async (batchId: string, updates: Partial<InventoryBatch>) => {
+    try {
+      // Update local state
+      setInventory(prev => prev.map(batch =>
+        batch.id === batchId ? { ...batch, ...updates } : batch
+      ));
+
+      // Update database
+      const token = await getFreshToken();
+      if (token && currentBranch) {
+        const updatedBatch = inventory.find(b => b.id === batchId);
+        if (updatedBatch) {
+          const merged = { ...updatedBatch, ...updates };
+          await fetch(
+            `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/${batchId}`,
+            {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-User-Token': token,
+                'Authorization': `Bearer ${publicAnonKey}`,
+              },
+              body: JSON.stringify({
+                drug_name: merged.drugName,
+                dosage: merged.dosage,
+                unit: merged.unit,
+                batch_number: merged.batchNumber,
+                beginning_inventory: merged.beginningInventory,
+                quantity_received: merged.quantityReceived,
+                date_received: merged.dateReceived,
+                unit_price: merged.unitCost,
+                quantity_dispensed: merged.quantityDispensed,
+                expiry_date: merged.expirationDate,
+                program: merged.program,
+                category: merged.category,
+                remarks: merged.remarks,
+              }),
+            }
+          );
+        }
+      }
+
+      toast.success('Batch updated successfully!');
+    } catch (error) {
+      console.error('Update error:', error);
+      toast.error('Failed to update batch');
+    }
   };
 
   const handleClearInventory = async () => {
@@ -683,29 +903,41 @@ export default function App() {
   const handleLogout = async () => {
     try {
       console.log('Initiating logout...');
-      // Sign out from Supabase (clears local storage and cookies)
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-      
-      // Clear all local application state
+
+      // Clear all local application state FIRST to prevent any pending sync operations
+      // from attempting to run during logout
       setSession(null);
       setCurrentBranch(null);
-      localStorage.removeItem('mediflow_current_branch');
       setInventory([]);
       setIsDataLoaded(false);
+      setIsSyncing(false); // Stop any ongoing sync indicators
       setActiveMenuItem('home');
-      
-      console.log('Logout successful, state cleared.');
+      localStorage.removeItem('mediflow_current_branch');
+
+      // Then sign out from Supabase (clears local storage and cookies)
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.warn('⚠️ Supabase signOut error:', error);
+        // Continue anyway since we've already cleared local state
+      }
+
+      console.log('✅ Logout successful, state cleared.');
       toast.info('Session Ended', { description: 'You have been safely signed out.' });
     } catch (error: any) {
-      console.error('Logout error:', error);
-      // Emergency state clearing
+      console.error('❌ Logout error:', error);
+      // Emergency state clearing - ensure everything is reset
       setSession(null);
       setCurrentBranch(null);
       setInventory([]);
       setIsDataLoaded(false);
+      setIsSyncing(false);
+      setActiveMenuItem('home');
       localStorage.clear(); // Nuclear option to ensure persistence is gone
-      window.location.href = '/'; // Force a clean slate
+
+      // Force page reload to ensure clean state
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 100);
     }
   };
 
@@ -723,17 +955,19 @@ export default function App() {
       case 'stock-locator':
         return <StockLocatorView userToken={session?.access_token} />;
       case 'inventory':
-        return <InventoryCheckView inventory={inventory} onClearInventory={handleClearInventory} userRole={userRole} />;
+        return <InventoryCheckView inventory={inventory} onClearInventory={handleClearInventory} />;
       case 'reports':
-        return <ReportsView 
-          inventory={inventory} 
-          userToken={session?.access_token} 
+        return <ReportsView
+          inventory={inventory}
+          userToken={session?.access_token}
           userRole={userRole}
           userName={userName}
           branchName={currentBranch?.name || 'Unknown Branch'}
+          onUpdateBatch={handleUpdateBatch}
+          onDeleteBatch={handleDeleteBatch}
         />; 
       case 'alerts':
-        return <AlertsView inventory={inventory} userToken={session?.access_token} userRole={userRole} branchName={currentBranch?.name} />;
+        return <AlertsView inventory={inventory} userToken={session?.access_token} userRole={userRole} branchName={currentBranch?.name} branchId={currentBranch?.id} />;
       case 'admin-dashboard':
         return session?.access_token ? <AdminDashboardView userToken={session.access_token} /> : null;
       case 'branch-management':

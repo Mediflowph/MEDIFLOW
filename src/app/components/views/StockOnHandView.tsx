@@ -285,7 +285,6 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
         <div className="flex justify-between items-start">
           <div>
             <h2 className="text-2xl font-bold text-gray-800 mb-2">Multi-Branch Stock Overview</h2>
-            <p className="text-gray-600">Consolidated inventory across all branch locations</p>
           </div>
           <button
             onClick={fetchAllBranches}
@@ -304,7 +303,6 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
                 <div>
                   <p className="text-white/80 text-sm font-medium">Total Stock</p>
                   <p className="text-3xl font-bold text-white mt-1">{totalStockAcrossAll.toLocaleString()}</p>
-                  <p className="text-white/60 text-xs mt-1">units across all branches</p>
                 </div>
                 <Package className="w-10 h-10 text-white/40" />
               </div>
@@ -317,7 +315,6 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
                 <div>
                   <p className="text-gray-600 text-sm font-medium">Total Items</p>
                   <p className="text-3xl font-bold text-gray-800 mt-1">{totalItemsAcrossAll}</p>
-                  <p className="text-gray-500 text-xs mt-1">unique batches</p>
                 </div>
                 <Package className="w-10 h-10 text-blue-500/40" />
               </div>
@@ -330,7 +327,6 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
                 <div>
                   <p className="text-gray-600 text-sm font-medium">Low Stock</p>
                   <p className="text-3xl font-bold text-orange-600 mt-1">{totalLowStock}</p>
-                  <p className="text-gray-500 text-xs mt-1">items need attention</p>
                 </div>
                 <TrendingDown className="w-10 h-10 text-orange-500/40" />
               </div>
@@ -343,7 +339,6 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
                 <div>
                   <p className="text-gray-600 text-sm font-medium">Expired</p>
                   <p className="text-3xl font-bold text-red-600 mt-1">{totalExpired}</p>
-                  <p className="text-gray-500 text-xs mt-1">items expired</p>
                 </div>
                 <AlertTriangle className="w-10 h-10 text-red-500/40" />
               </div>
@@ -599,7 +594,6 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
     <div className="p-8 space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-gray-800 mb-2">Stock on Hand</h2>
-        <p className="text-gray-600">Current inventory status with batch-level tracking</p>
       </div>
 
       {/* Summary Cards */}
@@ -610,7 +604,6 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
               <div>
                 <p className="text-white/80 text-sm font-medium">Total Stock</p>
                 <p className="text-3xl font-bold text-white mt-1">{totalStock.toLocaleString()}</p>
-                <p className="text-white/60 text-xs mt-1">{drugSummaries.length} unique drugs</p>
               </div>
               <Package className="w-10 h-10 text-white/40" />
             </div>
@@ -624,7 +617,6 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
                 <div>
                   <p className="text-gray-600 text-sm font-medium">Expired</p>
                   <p className="text-3xl font-bold text-red-600 mt-1">{expiredCount}</p>
-                  <p className="text-gray-500 text-xs mt-1">needs immediate action</p>
                 </div>
                 <XCircle className="w-10 h-10 text-red-500/40" />
               </div>
@@ -639,7 +631,6 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
                 <div>
                   <p className="text-gray-600 text-sm font-medium">Near Expiry</p>
                   <p className="text-3xl font-bold text-yellow-600 mt-1">{nearExpiryCount}</p>
-                  <p className="text-gray-500 text-xs mt-1">within 180 days</p>
                 </div>
                 <Clock className="w-10 h-10 text-yellow-500/40" />
               </div>
@@ -654,7 +645,6 @@ export function StockOnHandView({ inventory, onDeleteBatch, userToken, userRole 
                 <div>
                   <p className="text-gray-600 text-sm font-medium">Low Stock</p>
                   <p className="text-3xl font-bold text-orange-600 mt-1">{lowStockCount}</p>
-                  <p className="text-gray-500 text-xs mt-1">below 50 units</p>
                 </div>
                 <TrendingDown className="w-10 h-10 text-orange-500/40" />
               </div>

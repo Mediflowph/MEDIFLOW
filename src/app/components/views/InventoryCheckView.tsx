@@ -73,7 +73,6 @@ export function InventoryCheckView({ inventory, onClearInventory, userRole }: In
     <div className="p-8 space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-gray-800 mb-2">Inventory Check</h2>
-        <p className="text-gray-600">Physical count verification and variance reporting</p>
       </div>
 
       {/* Summary Card */}
@@ -249,14 +248,6 @@ export function InventoryCheckView({ inventory, onClearInventory, userRole }: In
       </Card>
 
       {/* Info Box */}
-      <Card className="border-l-4 border-blue-500 bg-blue-50 shadow-sm">
-        <CardContent className="pt-4">
-          <p className="text-sm text-blue-800">
-            <strong>Instructions:</strong> Enter the actual physical count for each item. The system will automatically 
-            calculate variances. Items with discrepancies will be highlighted in red. Add remarks to explain any differences.
-          </p>
-        </CardContent>
-      </Card>
     </div>
   );
 }

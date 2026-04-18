@@ -136,7 +136,6 @@ export function DispenseMedicinesView({ inventory, onDispense }: DispenseMedicin
     <div className="p-8 space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-gray-800 mb-2">Dispense Drugs</h2>
-        <p className="text-gray-600">Two-step selection: Choose drug → Select dosage/batch → Dispense with FEFO sorting</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

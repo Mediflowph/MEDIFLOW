@@ -4,8 +4,6 @@ import { Shield, RefreshCw, UserCheck, Clock, List, Building, Plus, Database, Us
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { projectId, publicAnonKey } from '@/../utils/supabase/info';
 import { toast } from 'sonner';
-import { supabase } from '@/app/utils/supabase';
-
 interface AdminDashboardViewProps {
   userToken: string;
 }
@@ -38,16 +36,8 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
   const [isCreatingMissingBranches, setIsCreatingMissingBranches] = useState(false);
   const [diagnosticData, setDiagnosticData] = useState<any>(null);
 
-  // Use the prop token directly instead of authManager
-  const getFreshToken = async (): Promise<string> => {
-    // Get fresh token from Supabase session to avoid stale tokens
-    const { data: { session }, error } = await supabase.auth.getSession();
-    if (error || !session) {
-      console.error('Failed to get fresh token:', error);
-      return userToken; // Fallback to prop token
-    }
-    return session.access_token;
-  };
+  // Use the prop token directly — App.tsx keeps it fresh via onAuthStateChange
+  const getFreshToken = async (): Promise<string> => userToken;
 
   const fetchAllUsers = async () => {
     try {
@@ -512,7 +502,6 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
           </div>
           <div>
             <h2 className="text-2xl font-bold text-gray-800">Admin Dashboard</h2>
-            <p className="text-gray-600 font-medium">System Administration & Auditing</p>
           </div>
         </div>
         <div className="flex gap-3">
@@ -643,35 +632,6 @@ export function AdminDashboardView({ userToken }: AdminDashboardViewProps) {
                   {isCreatingBranch ? 'Creating...' : 'Create Branch'}
                 </button>
               </form>
-            </CardContent>
-          </Card>
-
-          <Card className="border-none shadow-md bg-gradient-to-br from-green-50 to-emerald-50">
-            <CardHeader className="border-b bg-gradient-to-r from-green-500/10 to-emerald-500/10">
-              <CardTitle className="text-gray-800 flex items-center gap-2">
-                <Database className="w-5 h-5 text-green-600" />
-                Populate Sample Medicines
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex-1">
-                  <p className="text-sm text-gray-700 font-medium mb-1">
-                    Quick Start with Sample Data
-                  </p>
-                  <p className="text-xs text-gray-600">
-                    Instantly add 30 DOH Philippine health program medicines to all branches (EREID Program, NIP Vaccines, TB Program, Maternal &amp; Child Health, Malaria Program, and more)
-                  </p>
-                </div>
-                <button
-                  onClick={handlePopulateSampleMedicines}
-                  disabled={isPopulatingSamples || branches.length === 0}
-                  className="px-6 py-3 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap shadow-md"
-                >
-                  <Database className="w-4 h-4" />
-                  {isPopulatingSamples ? 'Populating...' : 'Populate All Branches'}
-                </button>
-              </div>
             </CardContent>
           </Card>
 

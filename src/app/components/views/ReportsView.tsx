@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { FileText, Download, FileSpreadsheet, Pill, Building, RefreshCw, Calendar, Filter, X, ShieldCheck, ToggleLeft, ToggleRight } from 'lucide-react';
+import { FileText, Download, FileSpreadsheet, Pill, Building, RefreshCw, Calendar, Filter, X, ShieldCheck, ToggleLeft, ToggleRight, Edit, Trash2, Save } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { InventoryBatch } from '@/app/types/inventory';
 import { exportToExcel, generateExcelReportWithBranchInfo } from '@/app/utils/exportUtils';
@@ -12,6 +12,8 @@ interface ReportsViewProps {
   userRole?: string;
   userName?: string;
   branchName?: string;
+  onUpdateBatch?: (batchId: string, updates: Partial<InventoryBatch>) => void;
+  onDeleteBatch?: (batchId: string) => void;
 }
 
 interface BranchData {
@@ -32,12 +34,14 @@ interface ReportFilters {
   stockStatus: 'all' | 'low' | 'normal' | 'out-of-stock';
 }
 
-export function ReportsView({ inventory, userToken, userRole = 'Staff', userName, branchName }: ReportsViewProps) {
+export function ReportsView({ inventory, userToken, userRole = 'Staff', userName, branchName, onUpdateBatch, onDeleteBatch }: ReportsViewProps) {
   const [branches, setBranches] = useState<BranchData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [generatingReportFor, setGeneratingReportFor] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [datePeriod, setDatePeriod] = useState<'all' | 'monthly' | 'yearly'>('all');
+  const [editingBatchId, setEditingBatchId] = useState<string | null>(null);
+  const [editFormData, setEditFormData] = useState<Partial<InventoryBatch>>({});
   
   // Date range defaults: Current quarter
   const getQuarterDates = () => {
@@ -90,8 +94,8 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
   };
 
   const calculateUtilization = (batch: InventoryBatch) => {
-    const total = batch.beginningInventory + batch.quantityReceived;
-    return total > 0 ? ((batch.quantityDispensed / total) * 100).toFixed(1) : '0.0';
+    const totalSupply = batch.beginningInventory + batch.quantityReceived;
+    return totalSupply > 0 ? (Math.min((batch.quantityDispensed / totalSupply) * 100, 100)).toFixed(1) : '0.0';
   };
 
   const formatPeso = (amount: number) => {
@@ -369,7 +373,6 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
             </div>
             <div>
               <h2 className="text-2xl font-bold text-gray-800">Multi-Branch Reports</h2>
-              <p className="text-gray-600 font-medium">Generate consolidated and individual branch reports</p>
             </div>
           </div>
           <div className="flex gap-3">
@@ -511,6 +514,36 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
       toast.success('Excel Exported', { description: 'The report has been downloaded.' });
     } catch (error) {
       toast.error('Export Failed', { description: 'Could not generate Excel file.' });
+    }
+  };
+
+  const handleEditBatch = (batchId: string) => {
+    const batch = inventory.find(b => b.id === batchId);
+    if (batch) {
+      setEditingBatchId(batchId);
+      setEditFormData(batch);
+      // Scroll to edit form
+      setTimeout(() => {
+        const editForm = document.getElementById('edit-batch-form');
+        if (editForm) editForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    }
+  };
+
+  const handleSaveEdit = () => {
+    if (editingBatchId && onUpdateBatch) {
+      onUpdateBatch(editingBatchId, editFormData);
+      setEditingBatchId(null);
+      setEditFormData({});
+    }
+  };
+
+  const handleDeleteBatch = (batchId: string) => {
+    const batch = inventory.find(b => b.id === batchId);
+    if (!batch) return;
+    if (!confirm(`Delete "${batch.drugName}" (Batch: ${batch.batchNumber})?`)) return;
+    if (onDeleteBatch) {
+      onDeleteBatch(batchId);
     }
   };
 
@@ -779,12 +812,13 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
                 <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Utilization %</th>
                 <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Expiry Date</th>
                 <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Expired</th>
+                <th className="border border-gray-300 px-3 py-2 text-left text-gray-700">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredInventory.length === 0 ? (
                 <tr>
-                  <td colSpan={15} className="border border-gray-300 px-3 py-8 text-center text-gray-500">
+                  <td colSpan={16} className="border border-gray-300 px-3 py-8 text-center text-gray-500">
                     <Pill className="w-8 h-8 mx-auto mb-2 opacity-30" />
                     <p>No inventory data matches the selected filters</p>
                   </td>
@@ -833,6 +867,22 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
                           {expired ? 'Yes' : 'No'}
                         </span>
                       </td>
+                      <td className="border border-gray-300 px-3 py-2 text-gray-700">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleEditBatch(batch.id)}
+                            className="text-sm text-gray-500 hover:text-[#9867C5] transition-colors"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteBatch(batch.id)}
+                            className="text-sm text-gray-500 hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })
@@ -842,17 +892,197 @@ export function ReportsView({ inventory, userToken, userRole = 'Staff', userName
         </div>
       </div>
 
-      {/* Report Legend */}
-      <div className="border-l-4 border-[#9867C5] bg-[#9867C5]/5 rounded-r-xl p-4 flex items-start gap-3">
-        <FileText className="w-5 h-5 text-[#9867C5] mt-0.5 flex-shrink-0" />
-        <div>
-          <p className="font-semibold text-gray-800 mb-1">Official DOH Report Format</p>
-          <p className="text-sm text-gray-600">
-            This report follows the Department of Health Physical Inventory Report format (BGO.HSO.F.PHAR.009).
-            Export to Excel to generate the official formatted document with proper headers, merged cells, and program grouping.
-          </p>
+      {/* Edit Form */}
+      {editingBatchId && (
+        <div id="edit-batch-form" className="bg-white rounded-xl border-2 border-[#9867C5] shadow-xl p-6 space-y-5 animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-lg text-gray-800 flex items-center gap-2">
+              <Edit className="w-5 h-5 text-[#9867C5]" />
+              Edit Inventory Batch
+            </h3>
+            <button onClick={() => setEditingBatchId(null)} className="text-gray-400 hover:text-gray-600 transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Drug Name */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Drug Name</label>
+              <input
+                type="text"
+                value={editFormData.drugName || ''}
+                onChange={e => setEditFormData(f => ({ ...f, drugName: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+
+            {/* Program */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Program</label>
+              <select
+                value={editFormData.program || 'General'}
+                onChange={e => setEditFormData(f => ({ ...f, program: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none bg-white"
+              >
+                <option value="General">General</option>
+                {uniquePrograms.map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+
+            {/* Category */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3" />
+                Category
+              </label>
+              <select
+                value={editFormData.category || 'Others'}
+                onChange={e => setEditFormData(f => ({ ...f, category: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none bg-white"
+              >
+                <option value="Others">Others</option>
+                <option value="Antimicrobial">Antimicrobial</option>
+                <option value="Non-antimicrobial">Non-antimicrobial</option>
+              </select>
+            </div>
+
+            {/* Dosage */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Dosage</label>
+              <input
+                type="text"
+                value={editFormData.dosage || ''}
+                onChange={e => setEditFormData(f => ({ ...f, dosage: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+
+            {/* Unit */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Unit</label>
+              <input
+                type="text"
+                value={editFormData.unit || 'units'}
+                onChange={e => setEditFormData(f => ({ ...f, unit: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+
+            {/* Batch Number */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Batch/Lot No.</label>
+              <input
+                type="text"
+                value={editFormData.batchNumber || ''}
+                onChange={e => setEditFormData(f => ({ ...f, batchNumber: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+
+            {/* Beginning Inventory */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Beg. Inventory</label>
+              <input
+                type="number"
+                value={editFormData.beginningInventory || 0}
+                onChange={e => setEditFormData(f => ({ ...f, beginningInventory: parseInt(e.target.value) }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+
+            {/* Quantity Received */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Qty Received</label>
+              <input
+                type="number"
+                value={editFormData.quantityReceived || 0}
+                onChange={e => setEditFormData(f => ({ ...f, quantityReceived: parseInt(e.target.value) }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+
+            {/* Date Received */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                Date Received
+              </label>
+              <input
+                type="date"
+                value={editFormData.dateReceived || ''}
+                onChange={e => setEditFormData(f => ({ ...f, dateReceived: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+
+            {/* Unit Cost */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Unit Cost</label>
+              <input
+                type="number"
+                step="0.01"
+                value={editFormData.unitCost || 0}
+                onChange={e => setEditFormData(f => ({ ...f, unitCost: parseFloat(e.target.value) }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+
+            {/* Quantity Dispensed */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Dispensed</label>
+              <input
+                type="number"
+                value={editFormData.quantityDispensed || 0}
+                onChange={e => setEditFormData(f => ({ ...f, quantityDispensed: parseInt(e.target.value) }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+
+            {/* Expiration Date */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                Expiry Date
+              </label>
+              <input
+                type="date"
+                value={editFormData.expirationDate || ''}
+                onChange={e => setEditFormData(f => ({ ...f, expirationDate: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+
+            {/* Remarks */}
+            <div className="space-y-1">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Remarks</label>
+              <input
+                type="text"
+                value={editFormData.remarks || ''}
+                onChange={e => setEditFormData(f => ({ ...f, remarks: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#9867C5] outline-none"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={handleSaveEdit}
+              className="flex items-center gap-2 px-4 py-2 bg-[#9867C5] hover:bg-[#9867C5]/90 text-white rounded-lg transition-colors shadow-md"
+            >
+              <Save className="w-4 h-4" />
+              Save Changes
+            </button>
+            <button
+              onClick={() => setEditingBatchId(null)}
+              className="flex items-center gap-2 px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-700 rounded-lg transition-colors shadow-md"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Report Legend */}
+      
     </div>
   );
 }

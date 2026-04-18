@@ -253,7 +253,7 @@ export function ProfileView({ session, userToken, onProfileUpdate }: ProfileView
         </div>
         <div>
           <h2 className="text-2xl font-bold text-gray-800">{isAdmin ? 'Branch Profile' : 'Profile Settings'}</h2>
-          <p className="text-gray-600 font-medium">{isAdmin ? 'Manage your profile and branch information' : 'Manage your account information'}</p>
+          <p className="text-gray-600 font-medium">{isAdmin ? '' : ''}</p>
         </div>
       </div>
 

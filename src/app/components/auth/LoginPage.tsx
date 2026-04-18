@@ -430,7 +430,6 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
                     >
                       <option>Pharmacy Staff</option>
                       <option disabled>Administrator</option>
-                      <option disabled>Health Officer</option>
                     </select>
 
                   </div>
@@ -485,6 +484,7 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
                       ))}
                     </select>
                   </div>
+              
                 </motion.div>
               )}
             </AnimatePresence>
@@ -565,6 +565,7 @@ export const LoginPage = ({ onLogin }: LoginPageProps) => {
             )}
           </form>
         </div>
+        
       </motion.div>
     </div>
   );
