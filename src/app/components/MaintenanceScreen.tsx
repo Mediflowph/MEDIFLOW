@@ -33,7 +33,7 @@ export function MaintenanceScreen() {
 
           {/* Logo */}
           <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-[#007AFF] to-[#34C759] bg-clip-text text-transparent">
-            Mediflow
+            MediflowPH
           </h1>
 
           {/* Title */}
