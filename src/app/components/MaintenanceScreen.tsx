@@ -33,7 +33,7 @@ export function MaintenanceScreen() {
 
           {/* Logo */}
           <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-[#007AFF] to-[#34C759] bg-clip-text text-transparent">
-            FiresecretFox
+            Mediflow
           </h1>
 
           {/* Title */}
@@ -44,7 +44,7 @@ export function MaintenanceScreen() {
           {/* Description */}
           <p className="text-gray-600 mb-6 leading-relaxed">
             We're currently upgrading our system to serve you better. 
-            FiresecreFox will be back online shortly!
+            Mediflow will be back online shortly!
           </p>
 
           {/* Status indicators */}
@@ -102,7 +102,7 @@ export function MaintenanceScreen() {
         <div className="mt-6 text-center">
           <div className="inline-flex items-center gap-2 bg-white/80 backdrop-blur-sm rounded-full px-4 py-2 shadow-sm">
             <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
-            <span className="text-sm text-gray-600 font-medium">wait nyo lang akooooooo, iiyak na ako dito</span>
+            <span className="text-sm text-gray-600 font-medium">Thank you!</span>
           </div>
         </div>
       </div>
