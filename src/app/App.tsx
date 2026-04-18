@@ -287,54 +287,71 @@ export default function App() {
         return;
       }
 
-      // Fetch from SQL database via backend API
-      const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/${branchId}`,
-        {
-          headers: {
-            'X-User-Token': token,
-            'Authorization': `Bearer ${publicAnonKey}`
+      // Fetch from SQL database via backend API with timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout
+
+      try {
+        const response = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-c88a69d7/inventory/${branchId}`,
+          {
+            headers: {
+              'X-User-Token': token,
+              'Authorization': `Bearer ${publicAnonKey}`
+            },
+            signal: controller.signal
           }
+        );
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          console.error('❌ Failed to fetch inventory - HTTP error:', response.status);
+          throw new Error('Failed to fetch inventory');
         }
-      );
 
-      if (!response.ok) {
-        console.error('❌ Failed to fetch inventory - HTTP error:', response.status);
-        throw new Error('Failed to fetch inventory');
-      }
+        const data = await response.json();
+        console.log('✅ Fetched inventory from SQL:', data);
 
-      const data = await response.json();
-      console.log('✅ Fetched inventory from SQL:', data);
-
-      if (data && data.length > 0) {
-        // Transform SQL data to match the app's inventory format
-        const transformedInventory = data.map((item: any) => ({
-          id: item.id,
-          drugName: item.drug_name,
-          program: item.program || 'General',
-          dosage: item.dosage || '',
-          unit: item.unit || 'units',
-          batchNumber: item.batch_number || '',
-          beginningInventory: item.beginning_inventory || item.quantity || 0,
-          quantityReceived: item.quantity_received || 0,
-          dateReceived: item.date_received || item.created_at || '',
-          unitCost: item.unit_cost || item.unit_price || 0,
-          quantityDispensed: item.quantity_dispensed || 0,
-          expirationDate: item.expiration_date || item.expiry_date || '',
-          remarks: item.remarks || '',
-          category: item.category || (() => {
-            const prog = (item.program || '').toLowerCase();
-            if (prog.includes('ereid') || prog.includes('tb') || prog.includes('antimicro')) return 'Antimicrobial';
-            if (prog.includes('nip') || prog.includes('immuniz')) return 'Non-antimicrobial';
-            return 'Others';
-          })(),
-        }));
-        setInventory(transformedInventory);
-      } else {
-        console.log('ℹ️ No inventory data found');
+        if (data && data.length > 0) {
+          // Transform SQL data to match the app's inventory format
+          const transformedInventory = data.map((item: any) => ({
+            id: item.id,
+            drugName: item.drug_name,
+            program: item.program || 'General',
+            dosage: item.dosage || '',
+            unit: item.unit || 'units',
+            batchNumber: item.batch_number || '',
+            beginningInventory: item.beginning_inventory || item.quantity || 0,
+            quantityReceived: item.quantity_received || 0,
+            dateReceived: item.date_received || item.created_at || '',
+            unitCost: item.unit_cost || item.unit_price || 0,
+            quantityDispensed: item.quantity_dispensed || 0,
+            expirationDate: item.expiration_date || item.expiry_date || '',
+            remarks: item.remarks || '',
+            category: item.category || (() => {
+              const prog = (item.program || '').toLowerCase();
+              if (prog.includes('ereid') || prog.includes('tb') || prog.includes('antimicro')) return 'Antimicrobial';
+              if (prog.includes('nip') || prog.includes('immuniz')) return 'Non-antimicrobial';
+              return 'Others';
+            })(),
+          }));
+          setInventory(transformedInventory);
+        } else {
+          console.log('ℹ️ No inventory data found');
+          setInventory([]);
+        }
+        setIsDataLoaded(true);
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        if (fetchError.name === 'AbortError') {
+          console.error('❌ Inventory fetch timed out after 15 seconds');
+        } else {
+          console.error('❌ Fetch error:', fetchError);
+        }
         setInventory([]);
+        setIsDataLoaded(true);
       }
-      setIsDataLoaded(true);
     } catch (error) {
       console.error('❌ Error fetching inventory:', error);
       setInventory([]);
@@ -782,13 +799,31 @@ export default function App() {
           if (initialSession) {
             console.log('Session found, loading user data...');
             setSession(initialSession);
+
+            // Set loading to false FIRST so UI shows up
+            setIsLoading(false);
+
+            // Then fetch inventory in background (don't await - prevents blocking)
             const savedBranch = localStorage.getItem('mediflow_current_branch');
             if (savedBranch) {
-              const parsedBranch = JSON.parse(savedBranch);
-              setCurrentBranch(parsedBranch);
-              await fetchInventory(parsedBranch.id);
+              try {
+                const parsedBranch = JSON.parse(savedBranch);
+                setCurrentBranch(parsedBranch);
+
+                // Fetch inventory without blocking - runs in background
+                console.log('🔄 Fetching inventory in background...');
+                fetchInventory(parsedBranch.id).catch(err => {
+                  console.error('❌ Background inventory fetch failed:', err);
+                  setIsDataLoaded(true); // Set flag even on error to prevent stuck state
+                });
+              } catch (err) {
+                console.error('❌ Error parsing saved branch:', err);
+                localStorage.removeItem('mediflow_current_branch');
+                setIsDataLoaded(true);
+              }
+            } else {
+              setIsDataLoaded(true);
             }
-            setIsLoading(false);
           } else {
             console.log('No active session found');
             setSession(null);
@@ -818,15 +853,27 @@ export default function App() {
       
       if (event === 'SIGNED_IN') {
         setSession(currentSession);
+        setIsLoading(false); // Set loading false FIRST
+
         const savedBranch = localStorage.getItem('mediflow_current_branch');
         if (savedBranch) {
-          const parsedBranch = JSON.parse(savedBranch);
-          setCurrentBranch(parsedBranch);
-          if (currentSession && !isDataLoaded) {
-            await fetchInventory(parsedBranch.id);
+          try {
+            const parsedBranch = JSON.parse(savedBranch);
+            setCurrentBranch(parsedBranch);
+
+            // Fetch inventory in background without blocking
+            if (currentSession && !isDataLoaded) {
+              console.log('🔄 Fetching inventory after sign-in...');
+              fetchInventory(parsedBranch.id).catch(err => {
+                console.error('❌ Background inventory fetch failed:', err);
+                setIsDataLoaded(true);
+              });
+            }
+          } catch (err) {
+            console.error('❌ Error parsing saved branch on sign-in:', err);
+            localStorage.removeItem('mediflow_current_branch');
           }
         }
-        setIsLoading(false);
       } else if (event === 'TOKEN_REFRESHED') {
         setSession(currentSession);
         setIsLoading(false);
