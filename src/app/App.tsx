@@ -20,10 +20,6 @@ import { AlertsView } from '@/app/components/views/AlertsView';
 import { AdminDashboardView } from '@/app/components/views/AdminDashboardView';
 import { BranchInventoryManagementView } from '@/app/components/views/BranchInventoryManagementView';
 import { ProfileView } from '@/app/components/views/ProfileView';
-import { MaintenanceScreen } from "./components/MaintenanceScreen";
-
-// Toggle this to enable/disable maintenance mode
-const MAINTENANCE_MODE = true;
 
 export interface InventoryBatch {
   id: string;
