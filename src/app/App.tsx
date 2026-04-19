@@ -216,7 +216,7 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [lastManualSync, setLastManualSync] = useState<number>(0);
-  const [isMaintenanceMode, setIsMaintenanceMode] = useState(true);
+  const [isMaintenanceMode, setIsMaintenanceMode] = useState(false);
   // Detect password-recovery flow immediately from the URL hash so we never
   // miss the Supabase PASSWORD_RECOVERY event (which fires during client init,
   // before the onAuthStateChange listener is registered in the useEffect).
