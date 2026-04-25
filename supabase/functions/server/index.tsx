@@ -90,9 +90,9 @@ app.post("/make-server-c88a69d7/init-admin-accounts", async (c) => {
           }, { onConflict: 'id' });
 
         if (upsertError) {
-          console.error(`⚠️ Could not upsert user row for ${account.email}:`, upsertError);
+          console.error(`Could not upsert user row for ${account.email}:`, upsertError);
         } else {
-          console.log(`✅ User row upserted for ${account.email}`);
+          console.log(`User row upserted for ${account.email}`);
         }
 
         results.push({ email: account.email, status: 'created', userId: data.user.id });
@@ -113,9 +113,9 @@ app.post("/make-server-c88a69d7/init-admin-accounts", async (c) => {
           approved: true,
         }, { onConflict: 'id' });
       }
-      console.log('✅ Admin/HO users-table repair complete');
+      console.log('Admin/HO users-table repair complete');
     } catch (repairErr) {
-      console.error('⚠️ Admin user-row repair error:', repairErr);
+      console.error('Admin user-row repair error:', repairErr);
     }
 
     return c.json({ 
@@ -175,13 +175,13 @@ app.post("/make-server-c88a69d7/signup", async (c) => {
       });
     
     if (insertError) {
-      console.error('❌ Error inserting user into users table:', insertError);
+      console.error('Error inserting user into users table:', insertError);
       // Don't fail the signup, just log the error
     } else {
-      console.log(`�� User inserted into users table: ${email}`);
+      console.log(`User inserted into users table: ${email}`);
     }
 
-    console.log(`✅ Created user: ${email} (${role}) - Approved: ${isApproved}`);
+    console.log(`Created user: ${email} (${role}) - Approved: ${isApproved}`);
     return c.json({ 
       success: true, 
       message: isApproved 
@@ -227,28 +227,28 @@ app.post("/make-server-c88a69d7/ensure-user-row", async (c) => {
       }, { onConflict: 'id' });
 
     if (upsertError) {
-      console.error('❌ ensure-user-row upsert failed:', upsertError);
+      console.error('ensure-user-row upsert failed:', upsertError);
       return c.json({ error: upsertError.message }, 500);
     }
 
-    console.log(`✅ ensure-user-row: row confirmed for ${user.email} (${role})`);
+    console.log(`ensure-user-row: row confirmed for ${user.email} (${role})`);
     return c.json({ success: true, action: 'upserted' });
   } catch (err) {
-    console.error('❌ ensure-user-row error:', err);
+    console.error('ensure-user-row error:', err);
     return c.json({ error: 'Internal error' }, 500);
   }
 });
 
 const checkAuth = async (c: any) => {
   const userToken = c.req.header('X-User-Token');
-  console.log('🔐 User token received:', userToken ? `${userToken.substring(0, 27)}...` : 'NO TOKEN');
+  console.log('User token received:', userToken ? `${userToken.substring(0, 27)}...` : 'NO TOKEN');
   
   if (!userToken) {
-    console.log('❌ No user token found in X-User-Token header');
+    console.log('No user token found in X-User-Token header');
     return { error: 'Auth session missing!' };
   }
   
-  console.log('🔑 Verifying user token...');
+  console.log('Verifying user token...');
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_ANON_KEY') ?? ''
@@ -257,16 +257,16 @@ const checkAuth = async (c: any) => {
   const { data: { user }, error } = await supabase.auth.getUser(userToken);
   
   if (error) {
-    console.error('❌ Token verification error:', error.message);
+    console.error('Token verification error:', error.message);
     return { error: `Token verification error: ${error.message}` };
   }
   
   if (!user) {
-    console.error('❌ No user found for token');
+    console.error('No user found for token');
     return { error: 'Auth session missing!' };
   }
   
-  console.log('✅ User authenticated:', user.id);
+  console.log('User authenticated:', user.id);
   return { user };
 };
 
@@ -274,7 +274,7 @@ app.get("/make-server-c88a69d7/inventory", async (c) => {
   try {
     const authResult = await checkAuth(c);
     if ('error' in authResult) {
-      console.log('❌ Unauthorized inventory fetch attempt');
+      console.log('Unauthorized inventory fetch attempt');
       return c.json({ error: authResult.error }, 401);
     }
 
@@ -296,16 +296,16 @@ app.get("/make-server-c88a69d7/inventory", async (c) => {
     
     if (userError) {
       // Row might not exist yet (e.g. newly created staff); treat as no branch assigned
-      console.warn('⚠️ users-table lookup failed (treating as no branch):', userError.message);
+      console.warn('users-table lookup failed (treating as no branch):', userError.message);
       return c.json([]);
     }
     
     if (!userData?.branch_id) {
-      console.log('⚠️ User has no branch assigned');
+      console.log('User has no branch assigned');
       return c.json([]);
     }
 
-    console.log(`📥 Fetching inventory for user: ${authResult.user.id}, branch: ${userData.branch_id}`);
+    console.log(`Fetching inventory for user: ${authResult.user.id}, branch: ${userData.branch_id}`);
     
     // Get inventory for user's branch
     const { data: inventory, error: inventoryError } = await supabase
@@ -315,14 +315,14 @@ app.get("/make-server-c88a69d7/inventory", async (c) => {
       .order('created_at', { ascending: false });
     
     if (inventoryError) {
-      console.error('❌ Error fetching inventory:', inventoryError);
+      console.error('Error fetching inventory:', inventoryError);
       return c.json({ error: 'Failed to fetch inventory' }, 500);
     }
 
-    console.log(`✅ Retrieved ${inventory?.length || 0} inventory item(s)`);
+    console.log(`Retrieved ${inventory?.length || 0} inventory item(s)`);
     return c.json(inventory || []);
   } catch (err) {
-    console.error("❌ Fetch inventory error:", err);
+    console.error("Fetch inventory error:", err);
     return c.json({ error: "Failed to fetch inventory" }, 500);
   }
 });
@@ -352,14 +352,14 @@ app.get("/make-server-c88a69d7/inventory/all-branches", async (c) => {
       .order('name', { ascending: true });
     
     if (branchError) {
-      console.error('❌ Error fetching branches:', branchError);
+      console.error('Error fetching branches:', branchError);
       return c.json({ error: 'Failed to fetch branches' }, 500);
     }
 
-    console.log(`📦 Found ${branches?.length || 0} branches in database`);
+    console.log(`Found ${branches?.length || 0} branches in database`);
     
     if (!branches || branches.length === 0) {
-      console.log('⚠️ No branches found in database');
+      console.log('No branches found in database');
       return c.json([]);
     }
 
@@ -381,7 +381,7 @@ app.get("/make-server-c88a69d7/inventory/all-branches", async (c) => {
         });
       });
     } catch (authErr) {
-      console.warn('⚠️ Failed to fetch auth users for contact info, continuing without:', authErr);
+      console.warn('Failed to fetch auth users for contact info, continuing without:', authErr);
     }
 
     // 4. Fetch ALL inventory in ONE query with explicit columns, then group by branch
@@ -393,7 +393,7 @@ app.get("/make-server-c88a69d7/inventory/all-branches", async (c) => {
       .order('drug_name', { ascending: true });
 
     if (invError) {
-      console.error('❌ Error fetching all inventory:', invError);
+      console.error('Error fetching all inventory:', invError);
       return c.json({ error: 'Failed to fetch inventory' }, 500);
     }
 
@@ -422,10 +422,10 @@ app.get("/make-server-c88a69d7/inventory/all-branches", async (c) => {
       };
     });
 
-    console.log(`✅ Retrieved ${result.length} branch inventories from SQL (${allInventory?.length || 0} total items)`);
+    console.log(`Retrieved ${result.length} branch inventories from SQL (${allInventory?.length || 0} total items)`);
     return c.json(result);
   } catch (err) {
-    console.error("❌ Fetch all inventories error:", err);
+    console.error("Fetch all inventories error:", err);
     return c.json({ error: "Failed to fetch branch inventories" }, 500);
   }
 });
@@ -435,7 +435,7 @@ app.get("/make-server-c88a69d7/inventory/:branchId", async (c) => {
   try {
     const authResult = await checkAuth(c);
     if ('error' in authResult) {
-      console.log('❌ Unauthorized inventory fetch attempt');
+      console.log('Unauthorized inventory fetch attempt');
       return c.json({ error: authResult.error }, 401);
     }
 
@@ -450,7 +450,7 @@ app.get("/make-server-c88a69d7/inventory/:branchId", async (c) => {
       return c.json([]);
     }
 
-    console.log(`📥 Fetching inventory for branch: ${branchId}`);
+    console.log(`Fetching inventory for branch: ${branchId}`);
     
     const supabase = getSupabaseClient();
     
@@ -462,14 +462,14 @@ app.get("/make-server-c88a69d7/inventory/:branchId", async (c) => {
       .order('created_at', { ascending: false });
     
     if (inventoryError) {
-      console.error('❌ Error fetching inventory:', inventoryError);
+      console.error('Error fetching inventory:', inventoryError);
       return c.json({ error: 'Failed to fetch inventory' }, 500);
     }
 
-    console.log(`✅ Retrieved ${inventory?.length || 0} inventory item(s) for branch ${branchId}`);
+    console.log(`Retrieved ${inventory?.length || 0} inventory item(s) for branch ${branchId}`);
     return c.json(inventory || []);
   } catch (err) {
-    console.error("❌ Fetch inventory error:", err);
+    console.error("Fetch inventory error:", err);
     return c.json({ error: "Failed to fetch inventory" }, 500);
   }
 });
@@ -478,7 +478,7 @@ app.post("/make-server-c88a69d7/inventory", async (c) => {
   try {
     const authResult = await checkAuth(c);
     if ('error' in authResult) {
-      console.log('❌ Unauthorized inventory save attempt');
+      console.log('Unauthorized inventory save attempt');
       return c.json({ error: authResult.error }, 401);
     }
 
@@ -507,17 +507,17 @@ app.post("/make-server-c88a69d7/inventory", async (c) => {
     
     if (userError) {
       // Row missing — treat as no branch rather than crashing
-      console.warn('⚠️ users-table lookup failed for sync (treating as no branch):', userError.message);
+      console.warn('users-table lookup failed for sync (treating as no branch):', userError.message);
       return c.json({ success: true, itemCount: 0, skipped: true });
     }
     
     if (!userData?.branch_id) {
-      console.log('⚠️ User has no branch assigned — skipping sync');
+      console.log('User has no branch assigned — skipping sync');
       return c.json({ success: true, itemCount: 0, skipped: true });
     }
 
-    console.log(`💾 Saving inventory for user: ${authResult.user.id}, branch: ${userData.branch_id}`);
-    console.log(`📦 Inventory items: ${inventory.length}`);
+    console.log(`Saving inventory for user: ${authResult.user.id}, branch: ${userData.branch_id}`);
+    console.log(`Inventory items: ${inventory.length}`);
     
     // Delete existing inventory for this branch
     const { error: deleteError } = await supabase
@@ -526,7 +526,7 @@ app.post("/make-server-c88a69d7/inventory", async (c) => {
       .eq('branch_id', userData.branch_id);
     
     if (deleteError) {
-      console.error('❌ Error deleting old inventory:', deleteError);
+      console.error('Error deleting old inventory:', deleteError);
       return c.json({ error: 'Failed to update inventory' }, 500);
     }
     
@@ -550,15 +550,15 @@ app.post("/make-server-c88a69d7/inventory", async (c) => {
         .insert(inventoryRecords);
       
       if (insertError) {
-        console.error('❌ Error inserting inventory:', insertError);
+        console.error('Error inserting inventory:', insertError);
         return c.json({ error: 'Failed to save inventory' }, 500);
       }
     }
     
-    console.log(`✅ Successfully saved ${inventory.length} items to inventory table`);
+    console.log(`Successfully saved ${inventory.length} items to inventory table`);
     return c.json({ success: true, itemCount: inventory.length });
   } catch (err) {
-    console.error("❌ Save inventory error:", err);
+    console.error("Save inventory error:", err);
     return c.json({ error: "Failed to save inventory" }, 500);
   }
 });
@@ -582,8 +582,8 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
       return c.json({ error: 'Invalid inventory format' }, 400);
     }
 
-    console.log(`💾 Admin/HO updating inventory for id: ${targetId}`);
-    console.log(`📦 Inventory items: ${inventory.length}`);
+    console.log(`Admin/HO updating inventory for id: ${targetId}`);
+    console.log(`Inventory items: ${inventory.length}`);
     
     const supabase = getSupabaseClient();
 
@@ -598,7 +598,7 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
 
     if (userData?.branch_id) {
       branchId = userData.branch_id;
-      console.log(`✅ Resolved branch_id via users table: ${branchId}`);
+      console.log(`Resolved branch_id via users table: ${branchId}`);
     } else {
       // Fallback: targetId might already BE the branch_id (returned when no user is linked)
       const { data: branchData } = await supabase
@@ -609,12 +609,12 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
 
       if (branchData) {
         branchId = targetId;
-        console.log(`✅ Using targetId directly as branch_id: ${branchId}`);
+        console.log(`Using targetId directly as branch_id: ${branchId}`);
       }
     }
 
     if (!branchId) {
-      console.error(`❌ Could not resolve branch for id: ${targetId}`);
+      console.error(`Could not resolve branch for id: ${targetId}`);
       return c.json({ error: 'Branch not found' }, 404);
     }
     
@@ -625,7 +625,7 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
       .eq('branch_id', branchId);
     
     if (deleteError) {
-      console.error('❌ Error deleting old inventory:', deleteError);
+      console.error('Error deleting old inventory:', deleteError);
       return c.json({ error: 'Failed to update inventory' }, 500);
     }
     
@@ -649,16 +649,16 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
         .insert(inventoryRecords);
       
       if (insertError) {
-        console.error('❌ Error inserting inventory:', insertError);
+        console.error('Error inserting inventory:', insertError);
         return c.json({ error: 'Failed to save inventory' }, 500);
       }
     }
     
-    console.log(`✅ Successfully updated inventory for branch ${branchId}`);
+    console.log(`Successfully updated inventory for branch ${branchId}`);
     
     return c.json({ success: true, itemCount: inventory.length });
   } catch (err) {
-    console.error("❌ Update branch inventory error:", err);
+    console.error("Update branch inventory error:", err);
     return c.json({ error: "Failed to update branch inventory" }, 500);
   }
 });
@@ -666,10 +666,10 @@ app.put("/make-server-c88a69d7/inventory/update-branch/:userId", async (c) => {
 app.get("/make-server-c88a69d7/system-drugs", async (c) => {
   try {
     // System drugs feature deprecated - KV store removed
-    console.log('⚠️ System drugs feature is deprecated (KV store removed)');
+    console.log('System drugs feature is deprecated (KV store removed)');
     return c.json([]);
   } catch (err) {
-    console.error("❌ Fetch system drugs error:", err);
+    console.error("Fetch system drugs error:", err);
     return c.json({ error: "Failed to fetch system drugs" }, 500);
   }
 });
@@ -687,13 +687,13 @@ app.post("/make-server-c88a69d7/system-drugs", async (c) => {
     }
 
     // System drugs feature deprecated - KV store removed
-    console.log('⚠️ System drugs feature is deprecated (KV store removed)');
+    console.log('System drugs feature is deprecated (KV store removed)');
     return c.json({ success: true, message: 'Feature deprecated' });
     
-    console.log(`✅ Added system drug: ${drug.drugName}`);
+    console.log(`Added system drug: ${drug.drugName}`);
     return c.json({ success: true });
   } catch (err) {
-    console.error("❌ Add system drug error:", err);
+    console.error("Add system drug error:", err);
     return c.json({ error: "Failed to add system drug" }, 500);
   }
 });
@@ -728,7 +728,7 @@ app.post("/make-server-c88a69d7/update-profile", async (c) => {
 
     if (getUserError || !targetUser?.user) {
       // targetUserId is a branch UUID, not an auth user. Update the branches table directly.
-      console.log(`⚠️ No auth user for id ${targetUserId} — treating as branch UUID, updating branches table`);
+      console.log(`No auth user for id ${targetUserId} — treating as branch UUID, updating branches table`);
       const branchUpdates: any = {};
       if (name !== undefined) branchUpdates.contact_person = name;
       if (branchContact !== undefined) branchUpdates.contact_phone = branchContact;
@@ -741,12 +741,12 @@ app.post("/make-server-c88a69d7/update-profile", async (c) => {
           .eq('id', targetUserId);
 
         if (branchUpdateError) {
-          console.error('❌ Error updating branch table:', branchUpdateError);
+          console.error('Error updating branch table:', branchUpdateError);
           return c.json({ error: branchUpdateError.message }, 400);
         }
       }
 
-      console.log(`✅ Updated branch record for: ${targetUserId}`);
+      console.log(`Updated branch record for: ${targetUserId}`);
       return c.json({ success: true });
     }
 
@@ -787,10 +787,10 @@ app.post("/make-server-c88a69d7/update-profile", async (c) => {
       }
     }
 
-    console.log(`✅ Updated profile for user: ${targetUserId}`);
+    console.log(`Updated profile for user: ${targetUserId}`);
     return c.json({ success: true, user: data.user });
   } catch (err) {
-    console.error("❌ Update profile error:", err);
+    console.error("Update profile error:", err);
     return c.json({ error: "Failed to update profile" }, 500);
   }
 });
@@ -832,9 +832,9 @@ app.delete("/make-server-c88a69d7/user/:userId", async (c) => {
         .eq('branch_id', userData.branch_id);
       
       if (invError) {
-        console.warn(`⚠️ Could not delete inventory for branch ${userData.branch_id}:`, invError);
+        console.warn(`Could not delete inventory for branch ${userData.branch_id}:`, invError);
       } else {
-        console.log(`🗑️ Deleted inventory for branch: ${userData.branch_id}`);
+        console.log(`Deleted inventory for branch: ${userData.branch_id}`);
       }
     }
 
@@ -845,21 +845,21 @@ app.delete("/make-server-c88a69d7/user/:userId", async (c) => {
       .eq('id', userIdToDelete);
 
     if (userTableError) {
-      console.warn(`⚠️ Could not delete user from users table:`, userTableError);
+      console.warn(`Could not delete user from users table:`, userTableError);
     }
 
     // Delete from auth
     const { error } = await supabase.auth.admin.deleteUser(userIdToDelete);
     
     if (error) {
-      console.error('❌ Error deleting user:', error);
+      console.error('Error deleting user:', error);
       return c.json({ error: error.message }, 400);
     }
 
-    console.log(`✅ Deleted user account: ${userIdToDelete}`);
+    console.log(`Deleted user account: ${userIdToDelete}`);
     return c.json({ success: true, message: 'User and inventory deleted successfully' });
   } catch (err) {
-    console.error("❌ Delete user error:", err);
+    console.error("Delete user error:", err);
     return c.json({ error: "Failed to delete user" }, 500);
   }
 });
@@ -878,7 +878,7 @@ app.delete("/make-server-c88a69d7/inventory/delete-branch/:userId", async (c) =>
 
     const userIdToDelete = c.req.param('userId');
     
-    console.log(`🗑️ Attempting to delete branch inventory for user: ${userIdToDelete}`);
+    console.log(`Attempting to delete branch inventory for user: ${userIdToDelete}`);
     
     const supabase = getSupabaseClient();
 
@@ -890,7 +890,7 @@ app.delete("/make-server-c88a69d7/inventory/delete-branch/:userId", async (c) =>
       .single();
 
     if (userError || !userData?.branch_id) {
-      console.log(`⚠️ No branch assigned to user: ${userIdToDelete}`);
+      console.log(`No branch assigned to user: ${userIdToDelete}`);
       return c.json({ 
         success: true, 
         message: 'No branch assigned to user',
@@ -905,18 +905,18 @@ app.delete("/make-server-c88a69d7/inventory/delete-branch/:userId", async (c) =>
       .eq('branch_id', userData.branch_id);
 
     if (deleteError) {
-      console.error('❌ Error deleting inventory:', deleteError);
+      console.error('Error deleting inventory:', deleteError);
       return c.json({ error: 'Failed to delete inventory' }, 500);
     }
 
-    console.log(`✅ Deleted inventory for branch: ${userData.branch_id}`);
+    console.log(`Deleted inventory for branch: ${userData.branch_id}`);
     return c.json({ 
       success: true, 
       message: 'Branch inventory deleted successfully',
       wasDeleted: true 
     });
   } catch (err) {
-    console.error("❌ Delete branch inventory error:", err);
+    console.error("Delete branch inventory error:", err);
     const errorMessage = err instanceof Error ? err.message : "Failed to delete branch inventory";
     return c.json({ error: errorMessage }, 500);
   }
@@ -948,7 +948,7 @@ app.post("/make-server-c88a69d7/cleanup-orphaned-inventories", async (c) => {
       .select('id');
 
     if (usersError) {
-      console.error('❌ Database error:', usersError);
+      console.error('Database error:', usersError);
       return c.json({ error: 'Failed to fetch users table' }, 500);
     }
 
@@ -968,9 +968,9 @@ app.post("/make-server-c88a69d7/cleanup-orphaned-inventories", async (c) => {
         .in('id', orphanedUserIds);
       
       if (deleteError) {
-        console.error('❌ Error deleting orphaned users:', deleteError);
+        console.error('Error deleting orphaned users:', deleteError);
       } else {
-        console.log(`🗑️ Cleaned up ${orphanedUserIds.length} orphaned users`);
+        console.log(`Cleaned up ${orphanedUserIds.length} orphaned users`);
       }
     }
 
@@ -981,7 +981,7 @@ app.post("/make-server-c88a69d7/cleanup-orphaned-inventories", async (c) => {
       remainingUsers: existingUserIds.size
     });
   } catch (err) {
-    console.error("❌ Cleanup error:", err);
+    console.error("Cleanup error:", err);
     return c.json({ error: "Failed to cleanup orphaned inventories" }, 500);
   }
 });
@@ -999,7 +999,7 @@ app.post("/make-server-c88a69d7/inventory/generate-report/:userId", async (c) =>
     }
 
     const targetUserId = c.req.param('userId');
-    console.log(`📊 Generating report for user: ${targetUserId}`);
+    console.log(`Generating report for user: ${targetUserId}`);
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -1031,7 +1031,7 @@ app.post("/make-server-c88a69d7/inventory/generate-report/:userId", async (c) =>
       .eq('branch_id', userTableData.branch_id);
 
     if (invError) {
-      console.error('❌ Error fetching inventory:', invError);
+      console.error('Error fetching inventory:', invError);
       return c.json({ error: 'Failed to fetch inventory' }, 500);
     }
 
@@ -1050,7 +1050,7 @@ app.post("/make-server-c88a69d7/inventory/generate-report/:userId", async (c) =>
       }
     });
   } catch (err) {
-    console.error("❌ Generate report error:", err);
+    console.error("Generate report error:", err);
     return c.json({ error: "Failed to generate report" }, 500);
   }
 });
@@ -1076,13 +1076,13 @@ app.get("/make-server-c88a69d7/all-users", async (c) => {
     const { data: authData, error: authError } = await supabase.auth.admin.listUsers();
     
     if (authError) {
-      console.error('❌ Error fetching auth users:', authError);
+      console.error('Error fetching auth users:', authError);
       return c.json({ error: 'Failed to fetch users' }, 500);
     }
 
     // SYNC: Ensure all auth users exist in users table
     // IMPORTANT: We only INSERT new users without overwriting existing branch assignments
-    console.log('🔄 Syncing auth users to users table (preserving branch assignments)...');
+    console.log('Syncing auth users to users table (preserving branch assignments)...');
     for (const authUser of authData?.users || []) {
       // First check if user already exists
       const { data: existingUser } = await supabase
@@ -1103,7 +1103,7 @@ app.get("/make-server-c88a69d7/all-users", async (c) => {
           .eq('id', authUser.id);
         
         if (updateError) {
-          console.error(`⚠️ Error updating user ${authUser.email}:`, updateError);
+          console.error(`Error updating user ${authUser.email}:`, updateError);
         }
       } else {
         // User doesn't exist - insert with null branch_id (will be set on login)
@@ -1118,7 +1118,7 @@ app.get("/make-server-c88a69d7/all-users", async (c) => {
           });
         
         if (insertError) {
-          console.error(`⚠️ Error inserting user ${authUser.email}:`, insertError);
+          console.error(`Error inserting user ${authUser.email}:`, insertError);
         }
       }
     }
@@ -1129,7 +1129,7 @@ app.get("/make-server-c88a69d7/all-users", async (c) => {
       .select('id, branch_id');
     
     if (usersError) {
-      console.error('❌ Error fetching users table:', usersError);
+      console.error('Error fetching users table:', usersError);
       return c.json({ error: 'Failed to fetch user data' }, 500);
     }
 
@@ -1139,7 +1139,7 @@ app.get("/make-server-c88a69d7/all-users", async (c) => {
       .select('id, name');
     
     if (branchesError) {
-      console.error('❌ Error fetching branches:', branchesError);
+      console.error('Error fetching branches:', branchesError);
     }
 
     // Create a map for quick lookups
@@ -1172,10 +1172,10 @@ app.get("/make-server-c88a69d7/all-users", async (c) => {
       };
     });
 
-    console.log(`✅ Retrieved ${allUsers.length} total user(s)`);
+    console.log(`Retrieved ${allUsers.length} total user(s)`);
     return c.json(allUsers);
   } catch (err) {
-    console.error("❌ Fetch all users error:", err);
+    console.error("Fetch all users error:", err);
     return c.json({ error: "Failed to fetch all users" }, 500);
   }
 });
@@ -1219,7 +1219,7 @@ app.post("/make-server-c88a69d7/approve-user", async (c) => {
     });
 
     if (updateAuthError) {
-      console.error('❌ Error updating user auth metadata:', updateAuthError);
+      console.error('Error updating user auth metadata:', updateAuthError);
       return c.json({ error: 'Failed to approve user' }, 500);
     }
 
@@ -1230,13 +1230,13 @@ app.post("/make-server-c88a69d7/approve-user", async (c) => {
       .eq('id', userId);
 
     if (updateTableError) {
-      console.error('❌ Error updating users table:', updateTableError);
+      console.error('Error updating users table:', updateTableError);
     }
 
-    console.log(`✅ User approved: ${userId}`);
+    console.log(`User approved: ${userId}`);
     return c.json({ success: true, message: 'User approved successfully' });
   } catch (err) {
-    console.error("❌ Approve user error:", err);
+    console.error("Approve user error:", err);
     return c.json({ error: "Failed to approve user" }, 500);
   }
 });
@@ -1272,21 +1272,21 @@ app.post("/make-server-c88a69d7/reject-user", async (c) => {
       .eq('id', userId);
 
     if (deleteTableError) {
-      console.error('❌ Error deleting from users table:', deleteTableError);
+      console.error('Error deleting from users table:', deleteTableError);
     }
 
     // Delete from auth
     const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(userId);
 
     if (deleteAuthError) {
-      console.error('❌ Error deleting user from auth:', deleteAuthError);
+      console.error('Error deleting user from auth:', deleteAuthError);
       return c.json({ error: 'Failed to reject user' }, 500);
     }
 
-    console.log(`✅ User rejected and deleted: ${userId}`);
+    console.log(`User rejected and deleted: ${userId}`);
     return c.json({ success: true, message: 'User rejected successfully' });
   } catch (err) {
-    console.error("❌ Reject user error:", err);
+    console.error("Reject user error:", err);
     return c.json({ error: "Failed to reject user" }, 500);
   }
 });
@@ -1311,7 +1311,7 @@ app.get("/make-server-c88a69d7/audit-logs", async (c) => {
       .limit(1000);
     
     if (error) {
-      console.error('❌ Error fetching audit logs:', error);
+      console.error('Error fetching audit logs:', error);
       return c.json({ error: 'Failed to fetch audit logs' }, 500);
     }
     
@@ -1330,7 +1330,7 @@ app.get("/make-server-c88a69d7/audit-logs", async (c) => {
     
     return c.json(transformedLogs);
   } catch (err) {
-    console.error("❌ Fetch audit logs error:", err);
+    console.error("Fetch audit logs error:", err);
     return c.json({ error: "Failed to fetch audit logs" }, 500);
   }
 });
@@ -1374,13 +1374,13 @@ app.post("/make-server-c88a69d7/audit-logs", async (c) => {
       });
     
     if (error) {
-      console.error('❌ Error adding audit log:', error);
+      console.error('Error adding audit log:', error);
       return c.json({ error: 'Failed to add audit log' }, 500);
     }
     
     return c.json({ success: true });
   } catch (err) {
-    console.error("❌ Add audit log error:", err);
+    console.error("Add audit log error:", err);
     return c.json({ error: "Failed to add audit log" }, 500);
   }
 });
@@ -1389,7 +1389,7 @@ app.get("/make-server-c88a69d7/branches", async (c) => {
   try {
     const supabase = getSupabaseClient();
     
-    console.log('📋 Fetching branches...');
+    console.log('Fetching branches...');
     
     // Fetch branches with all fields including contact info
     const { data: branches, error } = await supabase
@@ -1398,11 +1398,11 @@ app.get("/make-server-c88a69d7/branches", async (c) => {
       .order('created_at', { ascending: false });
     
     if (error) {
-      console.error('❌ Database error:', error);
+      console.error('Database error:', error);
       return c.json({ error: 'Failed to fetch branches' }, 500);
     }
     
-    console.log(`✅ Found ${branches?.length || 0} branches`);
+    console.log(`Found ${branches?.length || 0} branches`);
     
     // Transform the data - set inventory counts to 0 for now (fast response)
     // Frontend can check individual branches if needed
@@ -1420,7 +1420,7 @@ app.get("/make-server-c88a69d7/branches", async (c) => {
     
     return c.json(branchesWithInventory);
   } catch (err) {
-    console.error("❌ Fetch branches error:", err);
+    console.error("Fetch branches error:", err);
     return c.json({ error: "Failed to fetch branches" }, 500);
   }
 });
@@ -1460,11 +1460,11 @@ app.post("/make-server-c88a69d7/branches", async (c) => {
       .single();
     
     if (error) {
-      console.error('❌ Error creating branch:', error);
+      console.error('Error creating branch:', error);
       return c.json({ error: 'Failed to create branch' }, 500);
     }
     
-    console.log(`✅ Created branch: ${newBranch.name}`);
+    console.log(`Created branch: ${newBranch.name}`);
     return c.json({ 
       success: true, 
       branch: {
@@ -1474,7 +1474,7 @@ app.post("/make-server-c88a69d7/branches", async (c) => {
       }
     });
   } catch (err) {
-    console.error("❌ Create branch error:", err);
+    console.error("Create branch error:", err);
     return c.json({ error: "Failed to create branch" }, 500);
   }
 });
@@ -1498,11 +1498,11 @@ app.put("/make-server-c88a69d7/branches/:branchId/contact", async (c) => {
       .single();
 
     if (error) {
-      console.error('❌ Error updating branch contact:', error);
+      console.error('Error updating branch contact:', error);
       return c.json({ error: 'Failed to update branch contact info' }, 500);
     }
 
-    console.log(`✅ Updated contact for branch: ${data.name}`);
+    console.log(`Updated contact for branch: ${data.name}`);
     return c.json({
       success: true,
       branch: {
@@ -1514,7 +1514,7 @@ app.put("/make-server-c88a69d7/branches/:branchId/contact", async (c) => {
       }
     });
   } catch (err) {
-    console.error("❌ Update branch contact error:", err);
+    console.error("Update branch contact error:", err);
     return c.json({ error: "Failed to update branch contact info" }, 500);
   }
 });
@@ -1541,7 +1541,7 @@ app.delete("/make-server-c88a69d7/branches/:branchId", async (c) => {
       .eq('branch_id', branchId);
 
     if (invError) {
-      console.warn(`⚠️ Could not delete inventory for branch ${branchId}:`, invError);
+      console.warn(`Could not delete inventory for branch ${branchId}:`, invError);
     }
 
     // Unassign users from this branch
@@ -1551,7 +1551,7 @@ app.delete("/make-server-c88a69d7/branches/:branchId", async (c) => {
       .eq('branch_id', branchId);
 
     if (userError) {
-      console.warn(`⚠️ Could not unassign users from branch ${branchId}:`, userError);
+      console.warn(`Could not unassign users from branch ${branchId}:`, userError);
     }
 
     // Delete the branch
@@ -1561,14 +1561,14 @@ app.delete("/make-server-c88a69d7/branches/:branchId", async (c) => {
       .eq('id', branchId);
 
     if (deleteError) {
-      console.error('❌ Error deleting branch:', deleteError);
+      console.error('Error deleting branch:', deleteError);
       return c.json({ error: 'Failed to delete branch' }, 500);
     }
 
-    console.log(`✅ Deleted branch: ${branchId}`);
+    console.log(`Deleted branch: ${branchId}`);
     return c.json({ success: true, message: 'Branch deleted successfully' });
   } catch (err) {
-    console.error("❌ Delete branch error:", err);
+    console.error("Delete branch error:", err);
     return c.json({ error: "Failed to delete branch" }, 500);
   }
 });
@@ -1606,7 +1606,7 @@ app.post("/make-server-c88a69d7/branches/:branchId/initialize-inventory", async 
       .eq('branch_id', branchId);
     
     if (deleteError) {
-      console.error('❌ Error deleting old inventory:', deleteError);
+      console.error('Error deleting old inventory:', deleteError);
       return c.json({ error: 'Failed to clear existing inventory' }, 500);
     }
 
@@ -1642,17 +1642,17 @@ app.post("/make-server-c88a69d7/branches/:branchId/initialize-inventory", async 
       .insert(defaultInventory);
     
     if (insertError) {
-      console.error('❌ Error inserting inventory:', insertError);
+      console.error('Error inserting inventory:', insertError);
       return c.json({ error: 'Failed to initialize inventory' }, 500);
     }
     
-    console.log(`✅ Initialized inventory for branch: ${branch.name} (${defaultInventory.length} items)`);
+    console.log(`Initialized inventory for branch: ${branch.name} (${defaultInventory.length} items)`);
     return c.json({ 
       success: true, 
       message: `Initialized ${defaultInventory.length} items for ${branch.name}`
     });
   } catch (err) {
-    console.error("❌ Initialize inventory error:", err);
+    console.error("Initialize inventory error:", err);
     return c.json({ error: "Failed to initialize inventory" }, 500);
   }
 });
@@ -1678,7 +1678,7 @@ app.post("/make-server-c88a69d7/populate-sample-medicines", async (c) => {
       .select('id, name');
     
     if (branchError) {
-      console.error('❌ Error fetching branches:', branchError);
+      console.error('Error fetching branches:', branchError);
       return c.json({ error: 'Failed to fetch branches' }, 500);
     }
 
@@ -1744,7 +1744,7 @@ app.post("/make-server-c88a69d7/populate-sample-medicines", async (c) => {
           .insert(inventoryRecords);
         
         if (insertError) {
-          console.error(`❌ Error inserting inventory for branch ${branch.name}:`, insertError);
+          console.error(`Error inserting inventory for branch ${branch.name}:`, insertError);
           results.push({
             branchName: branch.name,
             itemsAdded: 0,
@@ -1757,10 +1757,10 @@ app.post("/make-server-c88a69d7/populate-sample-medicines", async (c) => {
             itemsAdded: sampleMedicines.length,
             status: 'Success'
           });
-          console.log(`✅ Added ${sampleMedicines.length} medicines to branch: ${branch.name}`);
+          console.log(`Added ${sampleMedicines.length} medicines to branch: ${branch.name}`);
         }
       } catch (branchErr) {
-        console.error(`❌ Error processing branch ${branch.name}:`, branchErr);
+        console.error(`Error processing branch ${branch.name}:`, branchErr);
         results.push({
           branchName: branch.name,
           itemsAdded: 0,
@@ -1769,7 +1769,7 @@ app.post("/make-server-c88a69d7/populate-sample-medicines", async (c) => {
       }
     }
 
-    console.log(`✅ Sample medicine population complete. Total items added: ${totalItemsAdded} across ${branches.length} branches`);
+    console.log(`Sample medicine population complete. Total items added: ${totalItemsAdded} across ${branches.length} branches`);
     
     return c.json({ 
       success: true, 
@@ -1779,7 +1779,7 @@ app.post("/make-server-c88a69d7/populate-sample-medicines", async (c) => {
       results
     });
   } catch (err) {
-    console.error("❌ Populate sample medicines error:", err);
+    console.error("Populate sample medicines error:", err);
     return c.json({ error: "Failed to populate sample medicines" }, 500);
   }
 });
@@ -1824,11 +1824,11 @@ app.post("/make-server-c88a69d7/assign-user-branch", async (c) => {
       }, { onConflict: 'id' });
     
     if (upsertError) {
-      console.error('❌ Error assigning branch to user:', upsertError);
+      console.error('Error assigning branch to user:', upsertError);
       return c.json({ error: 'Failed to assign branch' }, 500);
     }
     
-    console.log(`✅ Assigned user ${userId} to branch: ${branch.name} (${branchId})`);
+    console.log(`Assigned user ${userId} to branch: ${branch.name} (${branchId})`);
     return c.json({ 
       success: true, 
       message: `Assigned to ${branch.name}`,
@@ -1836,7 +1836,7 @@ app.post("/make-server-c88a69d7/assign-user-branch", async (c) => {
       branchName: branch.name
     });
   } catch (err) {
-    console.error("❌ Assign branch error:", err);
+    console.error("Assign branch error:", err);
     return c.json({ error: "Failed to assign branch" }, 500);
   }
 });
@@ -1854,7 +1854,7 @@ app.post("/make-server-c88a69d7/sync-user-branches", async (c) => {
       return c.json({ error: 'Unauthorized: Administrator access required' }, 403);
     }
 
-    console.log('🔄 Starting user-branch sync...');
+    console.log('Starting user-branch sync...');
 
     const supabase = getSupabaseClient();
     
@@ -1864,7 +1864,7 @@ app.post("/make-server-c88a69d7/sync-user-branches", async (c) => {
       .select('id, name');
     
     if (branchError) {
-      console.error('❌ Error fetching branches:', branchError);
+      console.error('Error fetching branches:', branchError);
       return c.json({ error: 'Failed to fetch branches' }, 500);
     }
 
@@ -1904,7 +1904,7 @@ app.post("/make-server-c88a69d7/sync-user-branches", async (c) => {
         const branchId = branchMap.get(branchName.toLowerCase());
         
         if (!branchId) {
-          console.warn(`⚠️ Branch not found for user ${authUser.email}: ${branchName}`);
+          console.warn(`Branch not found for user ${authUser.email}: ${branchName}`);
           results.errors.push(`Branch not found: ${branchName} (user: ${authUser.email})`);
           continue;
         }
@@ -1921,22 +1921,22 @@ app.post("/make-server-c88a69d7/sync-user-branches", async (c) => {
           }, { onConflict: 'id' });
         
         if (upsertError) {
-          console.error(`❌ Error assigning branch for ${authUser.email}:`, upsertError);
+          console.error(`Error assigning branch for ${authUser.email}:`, upsertError);
           results.errors.push(`Failed to assign ${authUser.email}: ${upsertError.message}`);
         } else {
-          console.log(`✅ Assigned ${authUser.email} to branch ${branchName} (${branchId})`);
+          console.log(`Assigned ${authUser.email} to branch ${branchName} (${branchId})`);
           results.assigned++;
         }
       } catch (err) {
-        console.error(`❌ Error processing user ${authUser.email}:`, err);
+        console.error(`Error processing user ${authUser.email}:`, err);
         results.errors.push(`Error processing ${authUser.email}: ${err}`);
       }
     }
 
-    console.log('✅ User-branch sync complete:', results);
+    console.log('User-branch sync complete:', results);
     return c.json(results);
   } catch (err) {
-    console.error("❌ Sync user branches error:", err);
+    console.error("Sync user branches error:", err);
     return c.json({ error: "Failed to sync user branches" }, 500);
   }
 });
@@ -1965,7 +1965,7 @@ app.get("/make-server-c88a69d7/diagnostic/branch-status", async (c) => {
       .order('name', { ascending: true });
     
     if (branchError) {
-      console.error('❌ Error fetching branches:', branchError);
+      console.error('Error fetching branches:', branchError);
       return c.json({ error: 'Failed to fetch branches' }, 500);
     }
 
@@ -1976,7 +1976,7 @@ app.get("/make-server-c88a69d7/diagnostic/branch-status", async (c) => {
       .order('name', { ascending: true });
     
     if (usersError) {
-      console.error('❌ Error fetching users table:', usersError);
+      console.error('Error fetching users table:', usersError);
       return c.json({ error: 'Failed to fetch users' }, 500);
     }
 
@@ -2069,10 +2069,10 @@ app.get("/make-server-c88a69d7/diagnostic/branch-status", async (c) => {
       }
     };
 
-    console.log('✅ Diagnostic complete');
+    console.log('Diagnostic complete');
     return c.json(diagnostic);
   } catch (err) {
-    console.error("❌ Branch diagnostic error:", err);
+    console.error("Branch diagnostic error:", err);
     return c.json({ error: "Failed to run diagnostic" }, 500);
   }
 });
@@ -2100,7 +2100,7 @@ app.post("/make-server-c88a69d7/create-missing-branches", async (c) => {
       .select('name');
     
     if (branchError) {
-      console.error('❌ Error fetching branches:', branchError);
+      console.error('Error fetching branches:', branchError);
       return c.json({ error: 'Failed to fetch branches' }, 500);
     }
 
@@ -2143,22 +2143,22 @@ app.post("/make-server-c88a69d7/create-missing-branches", async (c) => {
           });
         
         if (error) {
-          console.error(`❌ Error creating branch ${branchName}:`, error);
+          console.error(`Error creating branch ${branchName}:`, error);
           results.errors.push(`Failed to create ${branchName}: ${error.message}`);
         } else {
-          console.log(`✅ Created branch: ${branchName}`);
+          console.log(`Created branch: ${branchName}`);
           results.created++;
         }
       } catch (err) {
-        console.error(`❌ Error creating branch ${branchName}:`, err);
+        console.error(`Error creating branch ${branchName}:`, err);
         results.errors.push(`Failed to create ${branchName}: ${err}`);
       }
     }
 
-    console.log('✅ Branch creation complete:', results);
+    console.log('Branch creation complete:', results);
     return c.json(results);
   } catch (err) {
-    console.error("❌ Create branches error:", err);
+    console.error("Create branches error:", err);
     return c.json({ error: "Failed to create branches" }, 500);
   }
 });
@@ -2193,7 +2193,7 @@ app.post("/make-server-c88a69d7/migrate-to-sql-original", async (c) => {
       return c.json({ error: 'Unauthorized: Administrator access required' }, 403);
     }
 
-    console.log('🚀 Starting migration from KV store to SQL tables...');
+    console.log('Starting migration from KV store to SQL tables...');
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
@@ -2208,7 +2208,7 @@ app.post("/make-server-c88a69d7/migrate-to-sql-original", async (c) => {
     };
 
     // ========== STEP 1: Migrate Branches ==========
-    console.log('📦 Step 1: Migrating branches...');
+    console.log('Step 1: Migrating branches...');
     const kvBranches = await kv.get('mediflow_branches') || [];
     
     for (const branch of kvBranches) {
@@ -2223,20 +2223,20 @@ app.post("/make-server-c88a69d7/migrate-to-sql-original", async (c) => {
           }, { onConflict: 'id' });
         
         if (error) {
-          console.error(`❌ Error migrating branch ${branch.name}:`, error);
+          console.error(`Error migrating branch ${branch.name}:`, error);
           migrationResults.branches.errors.push(`Branch ${branch.name}: ${error.message}`);
         } else {
           migrationResults.branches.migrated++;
-          console.log(`✅ Migrated branch: ${branch.name}`);
+          console.log(`Migrated branch: ${branch.name}`);
         }
       } catch (err) {
-        console.error(`❌ Exception migrating branch:`, err);
+        console.error(`Exception migrating branch:`, err);
         migrationResults.branches.errors.push(`Branch ${branch.name}: ${err.message}`);
       }
     }
 
     // ========== STEP 2: Migrate Users ==========
-    console.log('👥 Step 2: Migrating users...');
+    console.log('Step 2: Migrating users...');
     const { data: authUsers } = await supabase.auth.admin.listUsers();
     
     for (const authUser of authUsers?.users || []) {
@@ -2266,20 +2266,20 @@ app.post("/make-server-c88a69d7/migrate-to-sql-original", async (c) => {
           }, { onConflict: 'id' });
         
         if (error) {
-          console.error(`❌ Error migrating user ${authUser.email}:`, error);
+          console.error(`Error migrating user ${authUser.email}:`, error);
           migrationResults.users.errors.push(`User ${authUser.email}: ${error.message}`);
         } else {
           migrationResults.users.migrated++;
-          console.log(`✅ Migrated user: ${authUser.email}`);
+          console.log(`Migrated user: ${authUser.email}`);
         }
       } catch (err) {
-        console.error(`❌ Exception migrating user:`, err);
+        console.error(`Exception migrating user:`, err);
         migrationResults.users.errors.push(`User ${authUser.email}: ${err.message}`);
       }
     }
 
     // ========== STEP 3: Migrate Inventory ==========
-    console.log('💊 Step 3: Migrating inventory...');
+    console.log('Step 3: Migrating inventory...');
     
     // Get all inventory from KV store (both old format and new format)
     const allKvInventories = await kv.getByPrefix('branch:');
@@ -2311,16 +2311,16 @@ app.post("/make-server-c88a69d7/migrate-to-sql-original", async (c) => {
             });
           
           if (error && !error.message.includes('duplicate')) {
-            console.error(`❌ Error migrating inventory item:`, error);
+            console.error(`Error migrating inventory item:`, error);
             migrationResults.inventory.errors.push(`Item ${item.drugName}: ${error.message}`);
           } else if (!error) {
             migrationResults.inventory.migrated++;
           }
         }
         
-        console.log(`✅ Migrated ${inventoryItems.length} items for branch ${branchId}`);
+        console.log(`Migrated ${inventoryItems.length} items for branch ${branchId}`);
       } catch (err) {
-        console.error(`❌ Exception migrating inventory:`, err);
+        console.error(`Exception migrating inventory:`, err);
         migrationResults.inventory.errors.push(`Key ${kvRecord.key}: ${err.message}`);
       }
     }
@@ -2341,7 +2341,7 @@ app.post("/make-server-c88a69d7/migrate-to-sql-original", async (c) => {
           .single();
         
         if (!userData?.branch_id) {
-          console.warn(`⚠️ User ${userId} has no branch, skipping inventory`);
+          console.warn(`User ${userId} has no branch, skipping inventory`);
           continue;
         }
         
@@ -2363,22 +2363,22 @@ app.post("/make-server-c88a69d7/migrate-to-sql-original", async (c) => {
             });
           
           if (error && !error.message.includes('duplicate')) {
-            console.error(`❌ Error migrating old format inventory:`, error);
+            console.error(`Error migrating old format inventory:`, error);
             migrationResults.inventory.errors.push(`User ${userId} item: ${error.message}`);
           } else if (!error) {
             migrationResults.inventory.migrated++;
           }
         }
         
-        console.log(`✅ Migrated old format inventory for user ${userId}`);
+        console.log(`Migrated old format inventory for user ${userId}`);
       } catch (err) {
-        console.error(`❌ Exception migrating old format inventory:`, err);
+        console.error(`Exception migrating old format inventory:`, err);
         migrationResults.inventory.errors.push(`Key ${kvRecord.key}: ${err.message}`);
       }
     }
 
     // ========== STEP 4: Migrate Audit Logs ==========
-    console.log('📋 Step 4: Migrating audit logs...');
+    console.log('Step 4: Migrating audit logs...');
     const kvAuditLogs = await kv.get('mediflow_audit_logs') || [];
     
     for (const log of kvAuditLogs) {
@@ -2409,19 +2409,19 @@ app.post("/make-server-c88a69d7/migrate-to-sql-original", async (c) => {
           });
         
         if (error && !error.message.includes('duplicate')) {
-          console.error(`❌ Error migrating audit log:`, error);
+          console.error(`Error migrating audit log:`, error);
           migrationResults.auditLogs.errors.push(`Log ${log.id}: ${error.message}`);
         } else if (!error) {
           migrationResults.auditLogs.migrated++;
         }
       } catch (err) {
-        console.error(`❌ Exception migrating audit log:`, err);
+        console.error(`Exception migrating audit log:`, err);
         migrationResults.auditLogs.errors.push(`Log ${log.id}: ${err.message}`);
       }
     }
 
-    console.log('✅ Migration completed!');
-    console.log('📊 Migration Results:', migrationResults);
+    console.log('Migration completed!');
+    console.log('Migration Results:', migrationResults);
 
     return c.json({
       success: true,
@@ -2442,7 +2442,7 @@ app.post("/make-server-c88a69d7/migrate-to-sql-original", async (c) => {
     });
 
   } catch (err) {
-    console.error("❌ Migration error:", err);
+    console.error("Migration error:", err);
     return c.json({ 
       error: "Failed to complete migration", 
       details: err.message 
@@ -2462,7 +2462,7 @@ app.post("/make-server-c88a69d7/forgot-password", async (c) => {
 
     const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") ?? "";
     if (!RESEND_API_KEY) {
-      console.error("❌ RESEND_API_KEY is not set");
+      console.error("RESEND_API_KEY is not set");
       return c.json({ error: "Email service is not configured" }, 500);
     }
 
@@ -2477,7 +2477,7 @@ app.post("/make-server-c88a69d7/forgot-password", async (c) => {
       (u: any) => u.email?.toLowerCase() === email.toLowerCase()
     );
     if (!user) {
-      console.log("⚠️ Forgot-password: user not found, silently succeeding:", email);
+      console.log("Forgot-password: user not found, silently succeeding:", email);
       return c.json({ success: true });
     }
 
@@ -2496,7 +2496,7 @@ app.post("/make-server-c88a69d7/forgot-password", async (c) => {
       value: { email: email.toLowerCase(), expires_at: expiresAt },
     });
     if (kvError) {
-      console.error("❌ Failed to store reset token:", kvError);
+      console.error("Failed to store reset token:", kvError);
       return c.json({ error: "Failed to generate reset token", details: kvError.message }, 500);
     }
 
@@ -2553,7 +2553,7 @@ app.post("/make-server-c88a69d7/forgot-password", async (c) => {
     const resendBody = await emailResponse.text();
 
     if (!emailResponse.ok) {
-      console.error("❌ Resend API error (HTTP " + emailResponse.status + "):", resendBody);
+      console.error("Resend API error (HTTP " + emailResponse.status + "):", resendBody);
       return c.json({
         error: "Failed to send reset email via Resend",
         details: resendBody,
@@ -2561,10 +2561,10 @@ app.post("/make-server-c88a69d7/forgot-password", async (c) => {
       }, 500);
     }
 
-    console.log("✅ Password reset email sent via Resend to:", email);
+    console.log("Password reset email sent via Resend to:", email);
     return c.json({ success: true });
   } catch (err: any) {
-    console.error("❌ Forgot password unexpected error:", err);
+    console.error("Forgot password unexpected error:", err);
     return c.json({ error: "Unexpected error in forgot-password", details: err.message }, 500);
   }
 });
@@ -2595,12 +2595,12 @@ app.post("/make-server-c88a69d7/reset-password", async (c) => {
       .maybeSingle();
 
     if (kvError) {
-      console.error("❌ KV lookup error:", kvError);
+      console.error("KV lookup error:", kvError);
       return c.json({ error: "Failed to verify token", details: kvError.message }, 500);
     }
 
     if (!kvRow?.value) {
-      console.warn("⚠️ Reset token not found or already used");
+      console.warn("Reset token not found or already used");
       return c.json({ error: "Invalid or already used reset link. Please request a new one." }, 400);
     }
 
@@ -2609,14 +2609,14 @@ app.post("/make-server-c88a69d7/reset-password", async (c) => {
     // Check expiry
     if (Date.now() > expires_at) {
       await supabase.from("kv_store_c88a69d7").delete().eq("key", kvKey);
-      console.warn("⚠️ Reset token expired for:", email);
+      console.warn("Reset token expired for:", email);
       return c.json({ error: "This reset link has expired. Please request a new one." }, 400);
     }
 
     // Find the user by email
     const { data: listData, error: listError } = await supabase.auth.admin.listUsers({ perPage: 1000 });
     if (listError) {
-      console.error("❌ Error listing users:", listError);
+      console.error("Error listing users:", listError);
       return c.json({ error: "Failed to locate user account", details: listError.message }, 500);
     }
 
@@ -2624,24 +2624,24 @@ app.post("/make-server-c88a69d7/reset-password", async (c) => {
       (u: any) => u.email?.toLowerCase() === email.toLowerCase()
     );
     if (!user) {
-      console.error("❌ User not found for email:", email);
+      console.error("User not found for email:", email);
       return c.json({ error: "User account not found" }, 404);
     }
 
     // Update password via admin API — no Supabase session required
     const { error: updateError } = await supabase.auth.admin.updateUserById(user.id, { password });
     if (updateError) {
-      console.error("❌ Password update error:", updateError);
+      console.error("Password update error:", updateError);
       return c.json({ error: "Failed to update password", details: updateError.message }, 500);
     }
 
     // Delete token so it cannot be reused
     await supabase.from("kv_store_c88a69d7").delete().eq("key", kvKey);
 
-    console.log("✅ Password successfully reset for:", email);
+    console.log("Password successfully reset for:", email);
     return c.json({ success: true });
   } catch (err: any) {
-    console.error("❌ Reset password unexpected error:", err);
+    console.error("Reset password unexpected error:", err);
     return c.json({ error: "Unexpected error in reset-password", details: err.message }, 500);
   }
 });
