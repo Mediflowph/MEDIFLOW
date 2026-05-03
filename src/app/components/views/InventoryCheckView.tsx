@@ -1,13 +1,18 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ClipboardCheck, AlertCircle, CheckCircle, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { Input } from '@/app/components/ui/input';
 import { InventoryBatch } from '@/app/types/inventory';
+import { saveDiscrepancy, removeDiscrepancy, loadDiscrepancies, Discrepancy } from '@/app/utils/discrepancyLog';
 
 interface InventoryCheckViewProps {
   inventory: InventoryBatch[];
   onClearInventory?: () => void;
   userRole?: string;
+  branchId?: string;
+  branchName?: string;
+  userName?: string;
+  userId?: string;
 }
 
 interface PhysicalCount {
@@ -16,9 +21,36 @@ interface PhysicalCount {
   remarks: string;
 }
 
-export function InventoryCheckView({ inventory, onClearInventory, userRole }: InventoryCheckViewProps) {
+export function InventoryCheckView({
+  inventory,
+  onClearInventory,
+  userRole,
+  branchId,
+  branchName,
+  userName,
+  userId
+}: InventoryCheckViewProps) {
   const [physicalCounts, setPhysicalCounts] = useState<Record<string, PhysicalCount>>({});
   const [showDiscrepanciesOnly, setShowDiscrepanciesOnly] = useState(false);
+
+  // Load saved discrepancies on mount
+  useEffect(() => {
+    if (!branchId) return;
+
+    const savedDiscrepancies = loadDiscrepancies(branchId, 30);
+    const countsMap: Record<string, PhysicalCount> = {};
+
+    savedDiscrepancies.forEach(disc => {
+      countsMap[disc.batchId] = {
+        batchId: disc.batchId,
+        physicalCount: disc.physicalCount,
+        remarks: disc.remarks,
+      };
+    });
+
+    setPhysicalCounts(countsMap);
+    console.log(`📋 Loaded ${savedDiscrepancies.length} saved discrepancies`);
+  }, [branchId]);
 
   const updatePhysicalCount = (batchId: string, count: number) => {
     setPhysicalCounts(prev => ({
@@ -29,6 +61,9 @@ export function InventoryCheckView({ inventory, onClearInventory, userRole }: In
         remarks: prev[batchId]?.remarks || '',
       },
     }));
+
+    // Save discrepancy
+    saveDiscrepancyForBatch(batchId, count, physicalCounts[batchId]?.remarks || '');
   };
 
   const updateRemarks = (batchId: string, remarks: string) => {
@@ -37,10 +72,59 @@ export function InventoryCheckView({ inventory, onClearInventory, userRole }: In
       [batchId]: {
         ...prev[batchId],
         batchId,
-        physicalCount: prev[batchId]?.physicalCount || 0,
+        physicalCount: prev[batchId]?.physicalCount !== undefined ? prev[batchId].physicalCount : getSystemStock(inventory.find(b => b.id === batchId)!),
         remarks,
       },
     }));
+
+    // Save discrepancy with updated remarks
+    const batch = inventory.find(b => b.id === batchId);
+    if (batch) {
+      const currentCount = physicalCounts[batchId]?.physicalCount !== undefined
+        ? physicalCounts[batchId].physicalCount
+        : getSystemStock(batch);
+      saveDiscrepancyForBatch(batchId, currentCount, remarks);
+    }
+  };
+
+  const saveDiscrepancyForBatch = (batchId: string, physicalCount: number, remarks: string) => {
+    if (!branchId || !branchName || !userName || !userId) {
+      console.warn('Missing branch/user info, cannot save discrepancy');
+      return;
+    }
+
+    const batch = inventory.find(b => b.id === batchId);
+    if (!batch) return;
+
+    const systemStock = getSystemStock(batch);
+    const variance = physicalCount - systemStock;
+
+    // If variance is 0, remove the discrepancy
+    if (variance === 0 && !remarks) {
+      removeDiscrepancy(branchId, batchId);
+      return;
+    }
+
+    // Save discrepancy
+    const discrepancy: Discrepancy = {
+      id: `disc_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      batchId,
+      drugName: batch.drugName,
+      dosage: batch.dosage,
+      batchNumber: batch.batchNumber,
+      unit: batch.unit,
+      systemStock,
+      physicalCount,
+      variance,
+      remarks,
+      timestamp: new Date().toISOString(),
+      branchId,
+      branchName,
+      userName,
+      userId,
+    };
+
+    saveDiscrepancy(discrepancy);
   };
 
   const getSystemStock = (batch: InventoryBatch) => {
@@ -49,7 +133,11 @@ export function InventoryCheckView({ inventory, onClearInventory, userRole }: In
 
   const getVariance = (batch: InventoryBatch) => {
     const systemStock = getSystemStock(batch);
-    const physicalCount = physicalCounts[batch.id]?.physicalCount ?? systemStock;
+    // Only calculate variance if physical count has been entered
+    if (!(batch.id in physicalCounts)) {
+      return 0; // No variance if not yet counted
+    }
+    const physicalCount = physicalCounts[batch.id].physicalCount;
     return physicalCount - systemStock;
   };
 
@@ -174,13 +262,16 @@ export function InventoryCheckView({ inventory, onClearInventory, userRole }: In
               <tbody>
                 {sortedInventory.map((batch) => {
                   const systemStock = getSystemStock(batch);
-                  const physicalCount = physicalCounts[batch.id]?.physicalCount ?? systemStock;
+                  const hasPhysicalCount = batch.id in physicalCounts;
+                  const physicalCount = hasPhysicalCount
+                    ? physicalCounts[batch.id].physicalCount
+                    : systemStock;
                   const variance = getVariance(batch);
                   const hasDiscrepancy = variance !== 0;
 
                   return (
-                    <tr 
-                      key={batch.id} 
+                    <tr
+                      key={batch.id}
                       className={`border-t border-gray-200 ${
                         hasDiscrepancy ? 'bg-red-50' : 'hover:bg-gray-50'
                       } transition-colors`}
@@ -201,16 +292,16 @@ export function InventoryCheckView({ inventory, onClearInventory, userRole }: In
                           type="text"
                           inputMode="numeric"
                           pattern="[0-9]*"
-                          value={physicalCount}
+                          placeholder={systemStock.toString()}
+                          value={hasPhysicalCount ? physicalCount : ''}
                           onChange={(e) => {
                             const value = e.target.value.replace(/\D/g, ''); // Remove non-digits
                             const numValue = value === '' ? 0 : parseInt(value, 10);
                             updatePhysicalCount(batch.id, numValue);
                           }}
                           onFocus={(e) => {
-                            if (e.target.value === '0') {
-                              e.target.select(); // Select all text if it's 0
-                            }
+                            // Auto-select all text on focus for easy replacement
+                            e.target.select();
                           }}
                           className={`w-24 ${hasDiscrepancy ? 'border-red-300 bg-white' : ''}`}
                         />
