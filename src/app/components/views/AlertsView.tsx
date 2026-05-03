@@ -7,6 +7,7 @@ import { isLowStock, getStockStatus, calculateReorderPoint } from '@/app/utils/r
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card';
 import { InventoryBatch } from '@/app/types/inventory';
 import { fetchTransactionHistory, Transaction } from '@/app/utils/transactionLog';
+import { getActiveDiscrepancies, Discrepancy } from '@/app/utils/discrepancyLog';
 import {
   RefreshCw,
   XCircle,
@@ -66,6 +67,8 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
   // Transaction history
   const [transactionHistory, setTransactionHistory] = useState<Transaction[]>([]);
   const [isLoadingTransactions, setIsLoadingTransactions] = useState(false);
+  // Discrepancies
+  const [discrepancies, setDiscrepancies] = useState<Discrepancy[]>([]);
 
   const now = new Date();
 
@@ -282,6 +285,27 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
 
     loadTransactionHistory();
   }, [userToken, userRole, branchId]);
+
+  // Load discrepancies for staff users
+  useEffect(() => {
+    const loadDiscrepanciesData = () => {
+      if (userRole === 'Administrator' || userRole === 'Health Officer' || !branchId) return;
+
+      try {
+        const activeDiscrepancies = getActiveDiscrepancies(branchId);
+        setDiscrepancies(activeDiscrepancies);
+        console.log(`📊 Loaded ${activeDiscrepancies.length} active discrepancies`);
+      } catch (error) {
+        console.error('Failed to load discrepancies:', error);
+      }
+    };
+
+    loadDiscrepanciesData();
+
+    // Reload discrepancies every 5 seconds to catch updates from Inventory Check
+    const interval = setInterval(loadDiscrepanciesData, 5000);
+    return () => clearInterval(interval);
+  }, [branchId, userRole]);
 
   // Track inventory changes — update live receiving events list whenever inventory prop changes
   useEffect(() => {
@@ -903,15 +927,9 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
     return daysUntil < 0;
   });
 
-  // Get discrepancies from inventory check - items with variance
-  // Variance = (Beginning Inventory + Quantity Received - Quantity Dispensed) vs actual physical count
-  // Since we don't have physical count data here, we check for items with remarks indicating manual adjustments
-  // In real scenario, this would compare system stock vs physical count from inventory check
-  const discrepancies = currentInventory.filter(item => {
-    const stock = getStockOnHand(item);
-    // Items with remarks might indicate manual adjustments or physical count variances
-    return item.remarks && item.remarks.trim() !== '';
-  });
+  // Get active discrepancies from the discrepancy log
+  // These are saved when staff performs physical inventory counts
+  const activeDiscrepancies = discrepancies;
 
   const nearExpiry60 = currentInventory.filter(item => {
     const days = getDaysUntilExpiry(item.expirationDate);
@@ -929,7 +947,7 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
 
   // Sort alerts by priority: Expired > Discrepancies > Near-Expiry > Low Stock
   const sortedExpired = [...expiredItems].sort((a, b) => getDaysUntilExpiry(a.expirationDate) - getDaysUntilExpiry(b.expirationDate));
-  const sortedDiscrepancies = [...discrepancies];
+  const sortedDiscrepancies = [...activeDiscrepancies].sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance));
   const sortedNear90 = [...nearExpiry60, ...nearExpiry90].sort((a, b) => getDaysUntilExpiry(a.expirationDate) - getDaysUntilExpiry(b.expirationDate));
   const sortedLowStock = [...lowStock].sort((a, b) => {
     const stockA = getStockOnHand(a);
@@ -979,13 +997,15 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
       // Discrepancies Sheet
       const discrepanciesData = [
         ['Inventory Discrepancies'],
-        ['Drug Name', 'Dosage', 'Batch Number', 'Stock on Hand', 'Remarks'],
-        ...sortedDiscrepancies.map(item => [
-          item.drugName,
-          item.dosage,
-          item.batchNumber,
-          getStockOnHand(item),
-          item.remarks || '-'
+        ['Drug Name', 'Dosage', 'Batch Number', 'System Stock', 'Physical Count', 'Variance', 'Remarks'],
+        ...sortedDiscrepancies.map(disc => [
+          disc.drugName,
+          disc.dosage,
+          disc.batchNumber,
+          disc.systemStock,
+          disc.physicalCount,
+          disc.variance,
+          disc.remarks || '-'
         ])
       ];
       const discrepanciesSheet = XLSX.utils.aoa_to_sheet(discrepanciesData);
@@ -1167,21 +1187,34 @@ export function AlertsView({ inventory, userToken, userRole = 'Staff', branchNam
               <p className="text-center text-gray-500 py-4">No discrepancies found</p>
             ) : (
               <div className="space-y-3 max-h-96 overflow-y-auto">
-                {sortedDiscrepancies.map(item => (
-                  <div key={item.id} className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                {sortedDiscrepancies.map(disc => (
+                  <div key={disc.id} className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
-                        <p className="font-semibold text-gray-800">{item.drugName}</p>
-                        <p className="text-sm text-gray-600">{item.dosage}</p>
-                        <p className="text-xs text-gray-500 mt-1">{item.batchNumber} • {item.unit}</p>
+                        <p className="font-semibold text-gray-800">{disc.drugName}</p>
+                        <p className="text-sm text-gray-600">{disc.dosage}</p>
+                        <p className="text-xs text-gray-500 mt-1">{disc.batchNumber} • {disc.unit}</p>
+                        {disc.remarks && (
+                          <p className="text-xs text-gray-600 mt-1 italic">Note: {disc.remarks}</p>
+                        )}
                       </div>
                       <div className="text-right">
-                        <p className="text-sm font-medium text-orange-600">
-                          Stock: {getStockOnHand(item)}
-                        </p>
-                        <p className="text-xs text-gray-600 mt-1">
-                          {item.remarks}
-                        </p>
+                        <div className="mb-2">
+                          <p className="text-xs text-gray-500">System Stock</p>
+                          <p className="text-sm font-semibold text-gray-700">{disc.systemStock}</p>
+                        </div>
+                        <div className="mb-2">
+                          <p className="text-xs text-gray-500">Physical Count</p>
+                          <p className="text-sm font-semibold text-gray-700">{disc.physicalCount}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500">Variance</p>
+                          <p className={`text-lg font-bold ${
+                            disc.variance > 0 ? 'text-blue-600' : 'text-red-600'
+                          }`}>
+                            {disc.variance > 0 ? '+' : ''}{disc.variance}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   </div>
