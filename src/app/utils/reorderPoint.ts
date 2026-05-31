@@ -62,6 +62,12 @@ export function calculateReorderPoint(
   batch: InventoryBatch,
   config: ReorderPointConfig = DEFAULT_REORDER_CONFIG
 ): number {
+  // If reorderLevel is manually set and greater than 0, use it
+  if (batch.reorderLevel && batch.reorderLevel > 0) {
+    return batch.reorderLevel;
+  }
+
+  // Otherwise, calculate based on usage
   // Calculate average daily usage
   const avgDailyUsage = calculateAverageDailyUsage(batch);
 
