@@ -38,6 +38,7 @@ export interface InventoryBatch {
   expirationDate: string;
   remarks: string;
   category: string;
+  reorderLevel: number;
 }
 
 // Mock initial inventory data
@@ -57,7 +58,8 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 0,
       expirationDate: '2027-11-30',
       remarks: '',
-      category: 'Antimicrobial'
+      category: 'Antimicrobial',
+      reorderLevel: 500
     },
     {
       id: '2',
@@ -73,7 +75,8 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 100,
       expirationDate: '2028-05-31',
       remarks: '',
-      category: 'Antimicrobial'
+      category: 'Antimicrobial',
+      reorderLevel: 20
     },
     {
       id: '3',
@@ -89,7 +92,8 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 161,
       expirationDate: '2026-01-30',
       remarks: '',
-      category: 'Non-antimicrobial'
+      category: 'Non-antimicrobial',
+      reorderLevel: 100
     },
     {
       id: '4',
@@ -105,7 +109,8 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 63,
       expirationDate: '2027-09-30',
       remarks: '',
-      category: 'Non-antimicrobial'
+      category: 'Non-antimicrobial',
+      reorderLevel: 30
     },
     {
       id: '5',
@@ -121,7 +126,8 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 296,
       expirationDate: '2026-11-19',
       remarks: '',
-      category: 'Non-antimicrobial'
+      category: 'Non-antimicrobial',
+      reorderLevel: 150
     },
     {
       id: '6',
@@ -137,7 +143,8 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 91,
       expirationDate: '2026-10-31',
       remarks: '',
-      category: 'Non-antimicrobial'
+      category: 'Non-antimicrobial',
+      reorderLevel: 200
     },
     {
       id: '7',
@@ -153,7 +160,8 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 666,
       expirationDate: '2025-08-31',
       remarks: '',
-      category: 'Non-antimicrobial'
+      category: 'Non-antimicrobial',
+      reorderLevel: 100
     },
     {
       id: '8',
@@ -169,7 +177,8 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 0,
       expirationDate: '2027-07-31',
       remarks: '',
-      category: 'Non-antimicrobial'
+      category: 'Non-antimicrobial',
+      reorderLevel: 50
     },
     {
       id: '9',
@@ -185,7 +194,8 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 1118,
       expirationDate: '2026-12-31',
       remarks: '',
-      category: 'Non-antimicrobial'
+      category: 'Non-antimicrobial',
+      reorderLevel: 300
     },
     {
       id: '10',
@@ -201,7 +211,8 @@ const generateMockData = (): InventoryBatch[] => {
       quantityDispensed: 572,
       expirationDate: '2026-12-31',
       remarks: '',
-      category: 'Non-antimicrobial'
+      category: 'Non-antimicrobial',
+      reorderLevel: 150
     },
   ];
 };
@@ -332,6 +343,7 @@ export default function App() {
             quantityDispensed: item.quantity_dispensed || 0,
             expirationDate: item.expiration_date || item.expiry_date || '',
             remarks: item.remarks || '',
+            reorderLevel: item.reorder_level || 0,
             category: item.category || (() => {
               const prog = (item.program || '').toLowerCase();
               if (prog.includes('ereid') || prog.includes('tb') || prog.includes('antimicro')) return 'Antimicrobial';
@@ -401,7 +413,8 @@ export default function App() {
         quantity_received: item.quantityReceived || 0,
         date_received: item.dateReceived,
         quantity_dispensed: item.quantityDispensed || 0,
-        remarks: item.remarks || ''
+        remarks: item.remarks || '',
+        reorder_level: item.reorderLevel || 0
       }));
 
       // Log items with dispensed quantities
@@ -709,6 +722,7 @@ export default function App() {
                 program: merged.program,
                 category: merged.category,
                 remarks: merged.remarks,
+                reorder_level: merged.reorderLevel,
               }),
             }
           );
