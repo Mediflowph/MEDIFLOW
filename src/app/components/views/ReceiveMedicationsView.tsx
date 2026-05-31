@@ -56,6 +56,7 @@ export function ReceiveMedicationsView({ onAddStock, existingDrugs = [], invento
     unitCost: 0,
     expirationDate: '',
     remarks: '',
+    reorderLevel: 0,
   });
 
   const [showDrugSuggestions, setShowDrugSuggestions] = useState(false);
@@ -143,6 +144,7 @@ export function ReceiveMedicationsView({ onAddStock, existingDrugs = [], invento
       unitCost: 0,
       expirationDate: '',
       remarks: '',
+      reorderLevel: 0,
     });
   };
 
@@ -423,6 +425,25 @@ export function ReceiveMedicationsView({ onAddStock, existingDrugs = [], invento
                   onChange={(e) => handleChange('unitCost', parseFloat(e.target.value) || 0)}
                   onFocus={(e) => e.target.select()}
                   placeholder="0.00"
+                  className="border-gray-300"
+                />
+              </div>
+
+              {/* Reorder Level */}
+              <div className="space-y-2">
+                <Label htmlFor="reorderLevel">
+                  Reorder Level *
+                  <span className="ml-2 text-xs text-gray-400 font-normal">Triggers low stock alert</span>
+                </Label>
+                <Input
+                  id="reorderLevel"
+                  type="number"
+                  min="0"
+                  value={formData.reorderLevel}
+                  onChange={(e) => handleChange('reorderLevel', parseInt(e.target.value) || 0)}
+                  onFocus={(e) => e.target.select()}
+                  placeholder="e.g., 50"
+                  required
                   className="border-gray-300"
                 />
               </div>
